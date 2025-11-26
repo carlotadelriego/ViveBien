@@ -1,0 +1,12 @@
+# Entornos virtuales
+venv/
+env/
+.venv/
+vibebien/
+
+# Cachés de Python
+__pycache__/
+*.pyc
+
+# Config VSCode
+.vscode/
