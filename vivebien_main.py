@@ -554,47 +554,56 @@ elif menu == "Chat con Aura":
 
 # ----- RUTINAS -----
 elif menu == "Rutinas":
-    st.title("Rutinas personalizadas")
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Rutinas personalizadas")
+        st.markdown("Selecciona una rutina para mejorar tu bienestar físico y mental.")
+    st.markdown("---")
+
+    # ---- RUTINA 1: RESPIRACIÓN ----
     col1, col2 = st.columns([1,3])
     with col1:
         img = os.path.join(ASSETS_DIR, "rutina_respiracion.png")
         if os.path.exists(img):
             st.image(img, width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🧘</div>", unsafe_allow_html=True)
     with col2:
         st.subheader("Respiración guiada")
         st.write("5 min — Nivel bajo")
         if st.button("Iniciar respiración"):
             st.success("Comenzando respiración guiada…")
+            st.video("https://www.youtube.com/watch?v=YFSc7Ck0Ao0")  # vídeo respiración
     st.markdown("---")
 
+    # ---- RUTINA 2: ESTIRAMIENTOS ----
     col1, col2 = st.columns([1,3])
     with col1:
         img2 = os.path.join(ASSETS_DIR, "rutina_estiramientos.png")
         if os.path.exists(img2):
             st.image(img2, width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🤸</div>", unsafe_allow_html=True)
     with col2:
         st.subheader("Estiramientos básicos")
-        st.write("10 min — Nivel medio")
+        st.write("5 min — Nivel medio")
         if st.button("Iniciar estiramientos"):
             st.success("Iniciando estiramientos…")
+            st.video("https://www.youtube.com/watch?v=2L2lnxIcNmo")  # vídeo de estiramientos
     st.markdown("---")
 
+    # ---- RUTINA 3: YOGA ----
     col1, col2 = st.columns([1,3])
     with col1:
         img3 = os.path.join(ASSETS_DIR, "rutina_yoga.png")
         if os.path.exists(img3):
             st.image(img3, width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🧘‍♀️</div>", unsafe_allow_html=True)
     with col2:
         st.subheader("Yoga suave")
-        st.write("15 min — Nivel bajo")
+        st.write("25 min — Nivel bajo")
         if st.button("Iniciar yoga"):
-            st.success("Iniciando yoga suave")
+            st.success("Iniciando yoga suave…")
+            st.video("https://www.youtube.com/watch?v=Eml2xnoLpYE")  # vídeo yoga suave
     st.markdown("---")
 
 # ----- PERFIL -----
