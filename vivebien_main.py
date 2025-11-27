@@ -11,6 +11,8 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import base64
+import datetime
+import math
 
 ASSETS_DIR = os.path.join(os.getcwd(), "assets")
 
@@ -19,7 +21,7 @@ from data_simulation import generate_history, simulate_biometrics
 from feedback_engine import analyze_text_sentiment, generate_recommendation
 import database
 
-st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="centered")
+st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="wide")
 AURA_NAME = "Aura"
 
 # ---------- TTS (pyttsx3 o 'say') ----------
@@ -60,8 +62,62 @@ def tts_say(text: str, filename: str):
 # -----------------------------
 database.init_db()
 
+
 # -----------------------------
-# session_state inicial (IMPORTANTE: inicializar antes de usar current_user)
+# CALENDARIO
+# -----------------------------
+import datetime
+
+# Obtener fecha actual
+today = datetime.date.today()
+weekday_labels = ["L", "M", "X", "J", "V", "S", "D"]
+
+# Generar los 7 días (lunes–domingo)
+start_of_week = today - datetime.timedelta(days=today.weekday())
+week_days = [start_of_week + datetime.timedelta(days=i) for i in range(7)]
+
+# CSS calendario estilo Vantage Fit
+st.markdown("""
+<style>
+.calendar-box {
+    background: white;
+    padding: 15px 10px 5px 10px;
+    border-radius: 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.cal-day {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 3px;
+}
+
+.cal-number {
+    font-size: 18px;
+    color: #444;
+    padding: 4px 10px;
+    border-radius: 50%;
+}
+
+.cal-selected {
+    background: #ff6b6b;
+    color: white !important;
+}
+
+.cal-date-label {
+    margin-top: 6px;
+    color: #777;
+    font-size: 13px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+# -----------------------------
+# session_state inicial
 # -----------------------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -104,10 +160,10 @@ def biometrics_rows_to_df(rows):
     df.set_index('date', inplace=True)
     return df
 
+
 # -----------------------------
 # APLICACIÓN GLOBAL DE ACCESIBILIDAD (después de inicializar session_state)
 # -----------------------------
-# fijar un tamaño base y mantener jerarquía de títulos
 size_map = {"Pequeño": "14px", "Normal": "18px", "Grande": "22px"}
 base_font = size_map.get(st.session_state.accesibilidad.get("font_size", "Normal"), "18px")
 
@@ -142,6 +198,7 @@ if st.session_state.accesibilidad.get("high_contrast", False):
             a, .stButton>button { color: #FFD700 !important; font-weight:700; }
         </style>
     """, unsafe_allow_html=True)
+
 
 # -----------------------------
 # GLOBAL STYLE (limpio y seguro)
@@ -183,22 +240,13 @@ st.markdown("""
 
 .mood-wrapper { 
     text-align: center;
-    height: 120px; /* área fija para alinear imagen y botón */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
 }
 
 .mood-face {
     cursor: pointer;
     opacity: 0.55;
     transition: all 0.20s ease-in-out;
-    border-radius: 8px;
-    width: 75px;
-    height: 75px;
-    object-fit: contain;
-    display: block;
+    border-radius: 5px;
 }
 
 .mood-face:hover {
@@ -340,8 +388,9 @@ if not st.session_state.logged_in:
         render_login_screen()
         st.stop()
 
+
 # -----------------------------
-# Sidebar (aparece solo después de login) — navegación 1-clic con on_change
+# Sidebar
 # -----------------------------
 def _update_menu():
     st.session_state.menu = st.session_state._menu_radio
@@ -369,61 +418,338 @@ current_user = st.session_state.user
 user_id = current_user["user_id"] if current_user else None
 menu = st.session_state.menu
 
-# -----------------------------
-# Fondo seguro (solo en Inicio) -> carga segura sin overlays ni z-index negativos
-# -----------------------------
-def load_background_safe(image_path):
-    if not os.path.exists(image_path):
-        return
-    with open(image_path, "rb") as image_file:
-        encoded = base64.b64encode(image_file.read()).decode()
-    page_bg_img = f"""
-    <style>
-    /* background-image aplicado sin fixed ni overlays */
-    [data-testid="stAppViewContainer"] {{
-        background-image: url("data:image/png;base64,{encoded}");
-        background-repeat: no-repeat;
-        background-position: center top;
-        background-size: cover;
-        background-attachment: scroll;
-    }}
-    [data-testid="stSidebar"] > div:first-child {{
-        background-color: rgba(255,255,255,0.92);
-    }}
-    .inicio-container {{
-        position: relative;
-        z-index: 1;
-    }}
-    </style>
-    """
-    st.markdown(page_bg_img, unsafe_allow_html=True)
+
+
 
 # -----------------------------
 # PÁGINAS
 # -----------------------------
-
 # ----- INICIO -----
 if menu == "Inicio":
-    load_background_safe(os.path.join(ASSETS_DIR, "inicio.png"))
-    name = current_user.get("name") if current_user else ""
-    st.markdown(f"<h2 style='text-align:center;margin-bottom:6px;'>Bienvenid@, {name} 🌿</h2>", unsafe_allow_html=True)
 
-    ### MAL ESTILO: contenedor centralizado con fondo blanco semitransparente
-    st.markdown("<div style='text-align:center' class='inicio-subtitle'>Una plataforma inteligente que te acompaña a mejorar tu salud, tus hábitos y tu bienestar emocional.</div>", unsafe_allow_html=True)
-    # linea separadora
-    st.markdown("<hr style='margin-top:18px;margin-bottom:18px;border:none;border-top:1px solid #ccc;'/>", unsafe_allow_html=True)
+    header_col1, header_col2 = st.columns([1,6])
 
-    ## espacio entre título y contenido transparente
-    st.markdown("<h2>Recomendación del día</h2>", unsafe_allow_html=True)
-    if st.session_state.last_recommendation:
-        st.markdown(f"<div class='reco-box'>{st.session_state.last_recommendation}</div>", unsafe_allow_html=True)
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+
+    with header_col2:
+        st.markdown("""
+        <div class='header-flex'>
+            <div>
+                <h1 style="margin:0;margin-top:-40px;">Bienvenid@ a ViveBien🌿</h1>
+                <p style="margin:0; margin-top:-10px;">Tu espacio personal para cuidar tu bienestar diario.</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("   ", unsafe_allow_html=True)
+    
+
+    # ============================================================================
+    #                         CALENDARIO SUPERIOR
+    # ============================================================================
+    today = datetime.date.today()
+    weekday_labels = ["L", "M", "X", "J", "V", "S", "D"]
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    week_days = [start_of_week + datetime.timedelta(days=i) for i in range(7)]
+
+    st.markdown("""
+    <style>
+        .calendar-box {
+            background: white;
+            padding: 15px 10px 5px 10px;
+            border-radius: 18px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        .cal-day {
+            font-size: 14px; 
+            color: #888;
+            margin-bottom: 3px;
+        }
+        .cal-number {
+            font-size: 18px;
+            color: #444;
+            width: 36px;              /* ancho fijo */
+            height: 36px;             /* alto fijo → círculo perfecto */
+            display: flex;            /* para centrar el número */
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;       /* círculo */
+            margin: 0 auto;           /* centra el círculo */
+            transition: 0.2s;
+        }
+
+        .cal-selected {
+            background: #c5edd2;      /* un verde bonito y más visible */
+            color: white !important;
+            font-weight: 700;         /* destaca más */
+            box-shadow: 0 0 6px rgba(0,0,0,0.15); /* halo ligero */
+        }
+
+        .cal-date-label {
+            margin-top: 8px;
+            color: #777;
+            font-size: 13px;
+        }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    # ------------------ Render calendario ------------------
+    cols = st.columns(7)
+
+    for i, day in enumerate(week_days):
+        with cols[i]:
+            st.markdown(f"<div class='cal-day'>{weekday_labels[i]}</div>", unsafe_allow_html=True)
+            if day == today:
+                st.markdown(f"<div class='cal-number cal-selected'>{day.day}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='cal-number'>{day.day}</div>", unsafe_allow_html=True)
+
+    fecha_larga = today.strftime("%A, %d %b %Y")
+    fecha_larga = fecha_larga.replace("Monday","lunes").replace("Tuesday","martes").replace("Wednesday","miércoles")\
+                             .replace("Thursday","jueves").replace("Friday","viernes").replace("Saturday","sábado")\
+                             .replace("Sunday","domingo")\
+                             .replace("Jan","ene").replace("Apr","abr").replace("Aug","ago").replace("Dec","dic")
+
+    st.markdown("-----", unsafe_allow_html=True)
+
+
+    # ============================================================================
+    #                         MÉTRICAS DEL DÍA
+    # ============================================================================
+    rows = database.load_biometrics(user_id)
+    df = biometrics_rows_to_df(rows)
+
+    if df.empty:
+        pasos = 0
+        minutos = 0
+        sleep_hours = 0
     else:
-        st.markdown("<div class='reco-box'>Aún no hay recomendaciones. Registra tu estado para que Aura pueda ayudarte.</div>", unsafe_allow_html=True)
+        latest = df.tail(1).iloc[0]
+        pasos = int(latest.steps)
+        minutos = int(latest.heart_rate) % 30
+        sleep_hours = latest.sleep_hours
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    objetivo_pasos = current_user.get("target_steps", 12000)
+    progreso = pasos / objetivo_pasos
+    progreso = min(max(progreso, 0), 1)
+
+    # ============================================================================
+    #                     DONUT (estilo Vantage Fit)
+    # ===========================================================================
+    fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
+    ax.pie(
+        [progreso, 1 - progreso],
+        colors=["#c5edd2", "#e6e6e6"],
+        startangle=90, # esto hace que el progreso empiece desde arriba
+        counterclock=False,
+        radius=0.70, # tamaño del donut
+        wedgeprops={"width": 0.17} # grosor del donut
+    )
+
+    ax.text( 
+        0, 0,
+        f"{int(progreso * 70)}%",
+        ha='center',
+        va='center',
+        fontsize=18,
+        fontweight='bold'
+    )
+
+
+    # ============================================================================
+    #              LAYOUT PRINCIPAL (IZQUIERDA + DONUT DERECHA)
+    # ============================================================================
+    col_left, col_right = st.columns([1.3, 1])
+
+    st.markdown("""
+    <style>
+
+        /* ==== SUBIR DONUT Y QUITAR ESPACIADOS ==== */
+
+        /* Subir el contenido de la columna derecha (donde está el donut) */
+        div[data-testid="column"]:nth-of-type(2) > div {
+            padding-top: 0 !important;
+            margin-top: -40px !important;
+        }
+
+        /* Quitar espacio inferior de la columna derecha */
+        div[data-testid="column"]:nth-of-type(2) {
+            margin-bottom: -20px !important;
+        }
+
+        /* Quitar espacio vertical entre el bloque de columnas y lo siguiente */
+        div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="column"]) {
+            margin-bottom: -30px !important;
+            padding-bottom: 0 !important;
+        }
+
+        /* Quitar margen inferior del contenedor de pyplot */
+        div[data-testid="stPyplotChart"] {
+            margin-bottom: -25px !important;
+            padding-bottom: 0 !important;
+        }
+
+
+        /* ==== ESTILOS ORIGINALES ==== */
+
+        .ini-title {
+            font-size: 22px !important;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .ini-sub {
+            font-size: 17px !important;
+            color: #555;
+            margin-bottom: 8px;
+        }
+        .metric-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 17px !important;
+            margin-top: 12px;
+        }
+        .metric-separator {
+            margin-top: 10px;
+            margin-bottom: 5px;
+            border: none;
+            border-top: 1px solid #eee;
+        }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    # ---------------------------- IZQUIERDA ----------------------------
+    with col_left:
+
+        # PROGRESO DIARIO
+        st.markdown("<div class='ini-title'>Progreso diario</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-sub'>Haz una pausa para respirar y relajarte 💡</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-sub'>Recuerda: pequeños hábitos crean grandes cambios.</div>", unsafe_allow_html=True)
+
+        # TUS MÉTRICAS
+        st.markdown("<hr class='metric-separator'/>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-title'>Tus métricas</div>", unsafe_allow_html=True)
+
+        # Sueño
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Sueño</span>
+                <span><b>{sleep_hours} h</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Mood
+        mood_dict = {
+            1:"Muy mal 😣 ", 
+            2:"Mal ☹️ ", 
+            3:"Normal 😐", 
+            4:"Bien 🙂", 
+            5:"Muy bien 😄"
+        }
+        mood_label = mood_dict.get(st.session_state.get("mood"), "—")
+
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Mood</span>
+                <span><b>{mood_label}</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Energía
+        energia = max(0, min(100, int((pasos / objetivo_pasos) * 100)))
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Energía</span>
+                <span><b>{energia}% ⚡</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Frecuencia cardiaca
+        hr = int(latest.heart_rate) if not df.empty else "—"
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Frecuencia cardiaca</span>
+                <span><b>{hr} bpm</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+# ---------------------------- DERECHA (DONUT + TÍTULO) ----------------------------
+    with col_right:
+
+        st.markdown("""
+            <div id="titulo-donut" style="
+                text-align:center;
+                font-size:26px;
+                font-weight:700;
+                color:#222;">
+                Desafío diario
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.pyplot(fig)
+
+    # === CSS limpio y correcto ===
+    st.markdown("""
+    <style>
+
+        /* --- TÍTULO: fijarlo en su sitio, que NO se mueva --- */
+        #titulo-donut {
+            position: relative !important;
+            z-index: 10 !important;
+            margin-top: 0px !important;
+            margin-bottom: 10px !important;
+            text-align: center;
+        }
+
+        /* --- SUBIR EL DONUT ENTERO (contenedor real) --- */
+        div[data-testid="stImageContainer"] {
+            margin-top: -20px !important;   /* Ajusta aquí: -10, -20, -40... */
+            text-align: center !important;
+        }
+
+        /* --- SUBIR SOLO EL GRÁFICO (la imagen) --- */
+        div[data-testid="stImageContainer"] img {
+            transform: translateY(-30px) !important;  /* Ajusta aquí para subir más */
+            transition: transform 0.2s ease-out;
+        }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+
 
 # ----- RESUMEN -----
 elif menu == "Resumen":
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Resumen de Bienestar")
+        st.markdown("Consulta tus métricas recientes y estado de ánimo diario.")
+
     if user_id is None:
         st.error("Usuario no identificado. Vuelve a iniciar sesión.")
         st.stop()
@@ -431,8 +757,6 @@ elif menu == "Resumen":
     rows = database.load_biometrics(user_id)
     df = biometrics_rows_to_df(rows)
 
-    st.image(os.path.join(ASSETS_DIR, "logo.png"), width=70)
-    st.title("Resumen del día")
 
     if df.empty:
         st.warning("No hay datos registrados todavía.")
@@ -507,7 +831,7 @@ elif menu == "Resumen":
 
                 # BOTÓN centrado debajo — añadir pequeño espaciador para separarlo de la imagen
                 # Ajusta `height` para aumentar/disminuir la separación (ej. 6px, 10px, 14px)
-                st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
                 btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
 
                 if st.button(btn_label, key=f"mood_btn_{value}"):
@@ -535,11 +859,20 @@ elif menu == "Resumen":
 
 # ----- REGISTRO DE ESTADO -----
 elif menu == "Registro de Estado":
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Registro de estado")
+        st.markdown("Comparte cómo te sientes hoy para recibir recomendaciones personalizadas.")
+    st.markdown("---")
+
     if user_id is None:
         st.error("Usuario no identificado. Vuelve a iniciar sesión.")
         st.stop()
 
-    st.title("Registro de estado")
     mode = st.radio("Modo de entrada", ("Texto", "Subir audio"), key="reg_mode")
     user_text = ""
     if mode == "Texto":
@@ -590,12 +923,20 @@ elif menu == "Registro de Estado":
 
 # ----- CHAT CON AURA -----
 elif menu == "Chat con Aura":
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Chatea con Aura")
+        st.markdown("Habla con Aura, tu asistente virtual de bienestar. Pregúntale sobre salud, ejercicio, nutrición y más.")
+    st.markdown("---")
     if user_id is None:
         st.error("Usuario no identificado. Vuelve a iniciar sesión.")
         st.stop()
 
-    st.image(os.path.join(ASSETS_DIR, "logo.png"), width=65)
-    st.title("Chatea con Aura")
+
     for role, text in st.session_state.chat_history:
         if role == "user":
             st.markdown(f"<div class='msg-user'>{text}</div>", unsafe_allow_html=True)
@@ -773,4 +1114,3 @@ elif menu == "Perfil":
         else:
             st.error("No hay usuario activo.")
 
-# fin del archivo
