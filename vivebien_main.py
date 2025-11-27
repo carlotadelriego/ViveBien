@@ -178,6 +178,50 @@ GLOBAL_STYLE = """
 """
 st.markdown(GLOBAL_STYLE, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+
+.mood-wrapper { 
+    text-align: center;
+    height: 120px; /* área fija para alinear imagen y botón */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.mood-face {
+    cursor: pointer;
+    opacity: 0.55;
+    transition: all 0.20s ease-in-out;
+    border-radius: 8px;
+    width: 75px;
+    height: 75px;
+    object-fit: contain;
+    display: block;
+}
+
+.mood-face:hover {
+    opacity: 0.9;
+    transform: scale(1.07);
+}
+
+.mood-face.selected {
+    opacity: 1 !important;
+    transform: scale(1.12);
+    box-shadow: 0 8px 18px rgba(0,0,0,0.18);
+    border-radius: 16px;
+}
+
+.mood-btn {
+    margin-top: 8px;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+
 # -----------------------------
 # RENDER LOGIN (centrado, seguro)
 # -----------------------------
@@ -418,7 +462,7 @@ elif menu == "Resumen":
         st.markdown("---")
         st.subheader("Estado de Ánimo")
 
-        # mood selection: mostrar caritas (imagen + botón debajo) — al pulsar el botón se selecciona y guarda
+        # ----- MOOD PICKER -----
         if "mood" not in st.session_state:
             st.session_state.mood = None
 
@@ -431,30 +475,63 @@ elif menu == "Resumen":
         ]
 
         cols = st.columns(5)
+
         for i, (file, label, value) in enumerate(mood_files):
             with cols[i]:
+
                 icon_path = os.path.join(ASSETS_DIR, file)
-                # mostrar imagen o placeholder
+
+                # Imagen centrada con animación y estilo
                 if os.path.exists(icon_path):
-                    # añadir clase para efecto visual (CSS definido arriba)
+                    encoded_img = base64.b64encode(open(icon_path, 'rb').read()).decode()
                     st.markdown(
-                        f"<div style='text-align:center;margin-bottom:6px;'><img src='data:image/png;base64,{base64.b64encode(open(icon_path,'rb').read()).decode()}' width='70' class='mood-face {'selected' if st.session_state.mood==value else ''}'></div>",
+                        f"""
+                        <div class='mood-wrapper'>
+                            <img src='data:image/png;base64,{encoded_img}' 
+                                width='75' 
+                                class='mood-face {"selected" if st.session_state.mood == value else ""}'>
+                        </div>
+                        """,
                         unsafe_allow_html=True
                     )
                 else:
-                    st.markdown(f"<div style='width:70px;height:70px;border-radius:12px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;margin:0 auto 6px;'>{label[0]}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"""
+                        <div class="mood-wrapper" 
+                                style="width:75px;height:75px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;">
+                            {label[0]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
-                # botón invisible pequeño con etiqueta clara para seleccionar mood
-                btn_label = "Seleccionar" if st.session_state.mood != value else "Seleccionado"
+                # BOTÓN centrado debajo — añadir pequeño espaciador para separarlo de la imagen
+                # Ajusta `height` para aumentar/disminuir la separación (ej. 6px, 10px, 14px)
+                st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+                btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
+
                 if st.button(btn_label, key=f"mood_btn_{value}"):
                     st.session_state.mood = value
-                    # guardar en BD (log de mood simple) y mostrar confirmación
+
+                    # GUARDADO EN BD
                     try:
-                        # guardamos el registro de mood con texto corto
                         database.save_mood_log(user_id, f"Estado: {label}", label, value)
-                    except Exception:
+                    except:
                         pass
-                    st.experimental_rerun()
+
+                    # POPUP agradable
+                    st.success(f"Estado registrado: {label}")
+
+                    # OPCIONAL: sonido TTS del click
+                    if current_user.get("tts_enabled", True):
+                        try:
+                            tts_say("Estado actualizado", tempfile.NamedTemporaryFile(delete=False).name)
+                        except:
+                            pass
+
+                    st.rerun()
+
+
 
 # ----- REGISTRO DE ESTADO -----
 elif menu == "Registro de Estado":
@@ -565,7 +642,7 @@ elif menu == "Rutinas":
     st.markdown("---")
 
     # ---- RUTINA 1: RESPIRACIÓN ----
-    col1, col2 = st.columns([1,3])
+    col1, col2 = st.columns([1,5])
     with col1:
         img = os.path.join(ASSETS_DIR, "rutina_respiracion.png")
         if os.path.exists(img):
@@ -579,7 +656,7 @@ elif menu == "Rutinas":
     st.markdown("---")
 
     # ---- RUTINA 2: ESTIRAMIENTOS ----
-    col1, col2 = st.columns([1,3])
+    col1, col2 = st.columns([1,5])
     with col1:
         img2 = os.path.join(ASSETS_DIR, "rutina_estiramientos.png")
         if os.path.exists(img2):
@@ -593,7 +670,7 @@ elif menu == "Rutinas":
     st.markdown("---")
 
     # ---- RUTINA 3: YOGA ----
-    col1, col2 = st.columns([1,3])
+    col1, col2 = st.columns([1,5])
     with col1:
         img3 = os.path.join(ASSETS_DIR, "rutina_yoga.png")
         if os.path.exists(img3):
