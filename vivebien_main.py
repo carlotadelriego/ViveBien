@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 import base64
 import datetime
 import math
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import whisper
 
 ASSETS_DIR = os.path.join(os.getcwd(), "assets")
 
@@ -23,6 +26,30 @@ import database
 
 st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="wide")
 AURA_NAME = "Aura"
+
+
+# MODELO DE EMOCIONES (texto)
+emotion_tokenizer = AutoTokenizer.from_pretrained("pysentimiento/robertuito-emotion-analysis")
+emotion_model = AutoModelForSequenceClassification.from_pretrained("pysentimiento/robertuito-emotion-analysis")
+
+def analyze_text_sentiment(text):
+    inputs = emotion_tokenizer(text, return_tensors="pt")
+    outputs = emotion_model(**inputs)
+    scores = torch.softmax(outputs.logits, dim=1)[0]
+    label_id = scores.argmax().item()
+    label = emotion_model.config.id2label[label_id]
+    confidence = float(scores[label_id])
+    return label, confidence
+
+
+# MODELO DE TRANSCRIPCIÓN WHISPER
+whisper_model = whisper.load_model("small")
+
+def transcribe_audio(path):
+    result = whisper_model.transcribe(path, language="es")
+    return result["text"]
+
+
 
 # ---------- TTS (pyttsx3 o 'say') ----------
 try:
@@ -424,7 +451,9 @@ menu = st.session_state.menu
 # -----------------------------
 # PÁGINAS
 # -----------------------------
+# ============================================================================
 # ----- INICIO -----
+# ============================================================================
 if menu == "Inicio":
 
     header_col1, header_col2 = st.columns([1,6])
@@ -446,9 +475,9 @@ if menu == "Inicio":
     st.markdown("   ", unsafe_allow_html=True)
     
 
-    # ============================================================================
-    #                         CALENDARIO SUPERIOR
-    # ============================================================================
+    # -----------------------------
+    #   CALENDARIO SUPERIOR
+    # -----------------------------
     today = datetime.date.today()
     weekday_labels = ["L", "M", "X", "J", "V", "S", "D"]
     start_of_week = today - datetime.timedelta(days=today.weekday())
@@ -499,7 +528,9 @@ if menu == "Inicio":
     """, unsafe_allow_html=True)
 
 
-    # ------------------ Render calendario ------------------
+    # -----------------------------
+    # Render calendario
+    # ----------------------------
     cols = st.columns(7)
 
     for i, day in enumerate(week_days):
@@ -519,9 +550,9 @@ if menu == "Inicio":
     st.markdown("-----", unsafe_allow_html=True)
 
 
-    # ============================================================================
-    #                         MÉTRICAS DEL DÍA
-    # ============================================================================
+    # -----------------------------
+    #   MÉTRICAS DEL DÍA
+    # -----------------------------
     rows = database.load_biometrics(user_id)
     df = biometrics_rows_to_df(rows)
 
@@ -539,9 +570,10 @@ if menu == "Inicio":
     progreso = pasos / objetivo_pasos
     progreso = min(max(progreso, 0), 1)
 
-    # ============================================================================
-    #                     DONUT (estilo Vantage Fit)
-    # ===========================================================================
+
+    # -----------------------------
+    #   DONUT 
+    # -----------------------------
     fig, ax = plt.subplots(figsize=(3.5, 3.5))
 
     ax.pie(
@@ -563,9 +595,9 @@ if menu == "Inicio":
     )
 
 
-    # ============================================================================
-    #              LAYOUT PRINCIPAL (IZQUIERDA + DONUT DERECHA)
-    # ============================================================================
+    # -----------------------------
+    #   LAYOUT PRINCIPAL (IZQUIERDA + DONUT DERECHA)
+    # -----------------------------
     col_left, col_right = st.columns([1.3, 1])
 
     st.markdown("""
@@ -626,7 +658,9 @@ if menu == "Inicio":
     """, unsafe_allow_html=True)
 
 
-    # ---------------------------- IZQUIERDA ----------------------------
+    # ---------------------------
+    # IZQUIERDA 
+    # ---------------------------
     with col_left:
 
         # PROGRESO DIARIO
@@ -693,7 +727,10 @@ if menu == "Inicio":
             unsafe_allow_html=True,
         )
 
-# ---------------------------- DERECHA (DONUT + TÍTULO) ----------------------------
+
+# -----------------------------
+#  DERECHA (DONUT + TÍTULO)
+# -----------------------------
     with col_right:
 
         st.markdown("""
@@ -738,8 +775,9 @@ if menu == "Inicio":
 
 
 
-
-# ----- RESUMEN -----
+# ============================================================================
+#           RESUMEN 
+# ============================================================================
 elif menu == "Resumen":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
@@ -829,8 +867,8 @@ elif menu == "Resumen":
                         unsafe_allow_html=True
                     )
 
+
                 # BOTÓN centrado debajo — añadir pequeño espaciador para separarlo de la imagen
-                # Ajusta `height` para aumentar/disminuir la separación (ej. 6px, 10px, 14px)
                 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
                 btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
 
@@ -857,7 +895,9 @@ elif menu == "Resumen":
 
 
 
-# ----- REGISTRO DE ESTADO -----
+# ============================================================================
+#            REGISTRO DE ESTADO 
+# ============================================================================
 elif menu == "Registro de Estado":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
@@ -921,7 +961,10 @@ elif menu == "Registro de Estado":
                 except:
                     pass
 
-# ----- CHAT CON AURA -----
+
+# ============================================================================ 
+#            CHAT CON AURA 
+# ============================================================================
 elif menu == "Chat con Aura":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
@@ -970,7 +1013,11 @@ elif menu == "Chat con Aura":
                     pass
             st.rerun()
 
-# ----- RUTINAS -----
+
+
+# ============================================================================
+#            RUTINAS 
+# ============================================================================
 elif menu == "Rutinas":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
@@ -1024,7 +1071,11 @@ elif menu == "Rutinas":
             st.video("https://www.youtube.com/watch?v=Eml2xnoLpYE")  # vídeo yoga suave
     st.markdown("---")
 
-# ----- PERFIL -----
+
+
+# ============================================================================
+#            PERFIL 
+# ============================================================================
 elif menu == "Perfil":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
