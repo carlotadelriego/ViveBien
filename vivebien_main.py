@@ -1,8 +1,5 @@
 # -----------------------------------------------
 #  VIVEBIEN — Plataforma de Bienestar Multimodal
-#  Archivo completo corregido: navegación 1-clic, accesibilidad segura,
-#  fondo sólo en Inicio (sin overlays), y caritas clicables en Resumen.
-# python -m streamlit run vivebien_main.py
 # -----------------------------------------------
 
 import streamlit as st
@@ -13,42 +10,18 @@ import matplotlib.pyplot as plt
 import base64
 import datetime
 import math
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import whisper
+from data_simulation import generate_history, simulate_biometrics
+import database
+from modelos_locales import (
+    analyze_text_sentiment,
+    transcribe_audio,
+    generate_recommendation
+)
+
 
 ASSETS_DIR = os.path.join(os.getcwd(), "assets")
-
-# módulos del proyecto (asegúrate de tenerlos en la misma carpeta)
-from data_simulation import generate_history, simulate_biometrics
-from feedback_engine import analyze_text_sentiment, generate_recommendation
-import database
-
 st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="wide")
 AURA_NAME = "Aura"
-
-
-# MODELO DE EMOCIONES (texto)
-emotion_tokenizer = AutoTokenizer.from_pretrained("pysentimiento/robertuito-emotion-analysis")
-emotion_model = AutoModelForSequenceClassification.from_pretrained("pysentimiento/robertuito-emotion-analysis")
-
-def analyze_text_sentiment(text):
-    inputs = emotion_tokenizer(text, return_tensors="pt")
-    outputs = emotion_model(**inputs)
-    scores = torch.softmax(outputs.logits, dim=1)[0]
-    label_id = scores.argmax().item()
-    label = emotion_model.config.id2label[label_id]
-    confidence = float(scores[label_id])
-    return label, confidence
-
-
-# MODELO DE TRANSCRIPCIÓN WHISPER
-whisper_model = whisper.load_model("small")
-
-def transcribe_audio(path):
-    result = whisper_model.transcribe(path, language="es")
-    return result["text"]
-
 
 
 # ---------- TTS (pyttsx3 o 'say') ----------
@@ -703,8 +676,22 @@ if menu == "Inicio":
             unsafe_allow_html=True,
         )
 
-        # Energía
-        energia = max(0, min(100, int((pasos / objetivo_pasos) * 100)))
+
+        # ---------- CÁLCULO DE ENERGÍA ----------
+        energy_steps = min(1, pasos / objetivo_pasos) * 40
+        energy_sleep = min(1, sleep_hours / 8) * 30
+        mood_value = st.session_state.get("mood", 3)  # por si es None
+        energy_mood = ((mood_value - 1) / 4) * 20
+
+        hr = int(latest.heart_rate) if not df.empty else "—"
+        if hr != "—":
+            energy_hr = max(0, 10 - (abs(hr - 70) / 70) * 10)
+        else:
+            energy_hr = 5  # valor neutral si no hay datos
+
+        energia = int(energy_steps + energy_sleep + energy_mood + energy_hr)
+        energia = max(0, min(100, energia))
+
         st.markdown(
             f"""
             <div class='metric-line'>
@@ -714,6 +701,7 @@ if menu == "Inicio":
             """,
             unsafe_allow_html=True,
         )
+
 
         # Frecuencia cardiaca
         hr = int(latest.heart_rate) if not df.empty else "—"
@@ -726,6 +714,12 @@ if menu == "Inicio":
             """,
             unsafe_allow_html=True,
         )
+
+        # Botón de registrar estado
+        st.markdown("<hr class='metric-separator'/>", unsafe_allow_html=True)
+        if st.button("Registrar estado de ánimo", use_container_width=True):
+            st.session_state.menu = "Registro de Estado"
+            st.rerun()
 
 
 # -----------------------------
@@ -772,6 +766,7 @@ if menu == "Inicio":
 
     </style>
     """, unsafe_allow_html=True)
+
 
 
 
@@ -895,6 +890,7 @@ elif menu == "Resumen":
 
 
 
+
 # ============================================================================
 #            REGISTRO DE ESTADO 
 # ============================================================================
@@ -913,53 +909,80 @@ elif menu == "Registro de Estado":
         st.error("Usuario no identificado. Vuelve a iniciar sesión.")
         st.stop()
 
+    # -----------------------------
+    #   MODO DE ENTRADA
+    # -----------------------------
     mode = st.radio("Modo de entrada", ("Texto", "Subir audio"), key="reg_mode")
     user_text = ""
+
+    # -----------------------------
+    #   TEXTO
+    # -----------------------------
     if mode == "Texto":
         user_text = st.text_area("¿Cómo te sientes hoy?", key="reg_text")
+
+    # -----------------------------
+    #   AUDIO (WHISPER)
+    # -----------------------------
     else:
-        audio_file = st.file_uploader("Sube audio", type=["wav","mp3","m4a"])
+        audio_file = st.file_uploader("Sube un archivo de audio", type=["wav","mp3","m4a"])
         if audio_file:
             st.audio(audio_file)
-            st.info("Transcribiendo audio...")
-            try:
-                import speech_recognition as sr
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
-                    tf.write(audio_file.read())
-                r = sr.Recognizer()
-                with sr.AudioFile(tf.name) as src:
-                    audio = r.record(src)
-                user_text = r.recognize_google(audio, language="es-ES")
-                st.success("Transcripción: " + user_text)
-            except Exception as e:
-                st.warning(f"No se pudo transcribir: {e}")
+            with st.spinner("Transcribiendo audio…"):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
+                        tf.write(audio_file.read())
+                        temp_audio_path = tf.name
 
+                    user_text = transcribe_audio(temp_audio_path)
+
+                    st.success("Transcripción detectada:")
+                    st.write(user_text)
+                except Exception as e:
+                    st.warning(f"No se pudo transcribir el audio: {e}")
+                    user_text = ""
+
+    # -----------------------------
+    #   PROCESAR
+    # -----------------------------
     if st.button("Analizar y guardar"):
         if not user_text.strip():
-            st.error("Escribe algo primero.")
+            st.error("Escribe algo o sube audio válido.")
+            st.stop()
+
+        # 1. Analizar sentimiento
+        emotion, score = analyze_text_sentiment(user_text)
+
+        # 2. Guardar en BD
+        database.save_mood_log(user_id, user_text, emotion, score)
+
+        # 3. Cargar biometrías
+        rows = database.load_biometrics(user_id)
+        df = biometrics_rows_to_df(rows)
+
+        if df.empty:
+            latest_bio = simulate_biometrics()
+            database.save_biometrics(user_id, latest_bio)
         else:
-            sent, score = analyze_text_sentiment(user_text)
-            database.save_mood_log(user_id, user_text, sent, score)
-            rows = database.load_biometrics(user_id)
-            df = biometrics_rows_to_df(rows)
-            if df.empty:
-                sim = simulate_biometrics()
-                database.save_biometrics(user_id, sim)
-                latest = sim
-            else:
-                latest = df.tail(1).iloc[0].to_dict()
-            reco = generate_recommendation(user_text, latest, current_user.get("target_steps",8000) if current_user else 8000)
-            st.session_state.last_recommendation = reco
-            st.info(reco)
-            if current_user and current_user.get("tts_enabled", True):
-                try:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
-                    tmp.close()
-                    ap = tts_say(reco, tmp.name)
-                    if ap:
-                        st.audio(ap)
-                except:
-                    pass
+            latest_bio = df.tail(1).iloc[0].to_dict()
+
+        # 4. Generar recomendación (ahora SOLO user_text)
+        reco = generate_recommendation(user_text)
+
+        st.session_state.last_recommendation = reco
+        st.info(reco)
+
+        # 5. TTS
+        if current_user and current_user.get("tts_enabled", True):
+            try:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
+                tmp.close()
+                ap = tts_say(reco, tmp.name)
+                if ap:
+                    st.audio(ap)
+            except:
+                pass
+
 
 
 # ============================================================================ 
@@ -999,6 +1022,7 @@ elif menu == "Chat con Aura":
             df = biometrics_rows_to_df(rows)
             latest = df.tail(1).iloc[0].to_dict() if not df.empty else simulate_biometrics()
             reply = generate_recommendation(user_msg, latest, current_user.get("target_steps",8000) if current_user else 8000)
+            
             st.session_state.chat_history.append(("aura", reply))
             sent, score = analyze_text_sentiment(user_msg)
             database.save_mood_log(user_id, user_msg, sent, score)
