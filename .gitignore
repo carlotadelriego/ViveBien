@@ -14,6 +14,8 @@ __pycache__/
 
 # Models (pesan mucho, no se suben)
 models/
+*.gguf
+
 
 # Archivos de audio temporales
 *.wav
@@ -26,3 +28,5 @@ models/
 
 # Archivos del sistema
 .DS_Store
+
+vivebien_clean/
