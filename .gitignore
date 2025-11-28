@@ -1,12 +1,28 @@
-# Entornos virtuales
+# Entorno virtual
 venv/
-env/
 .venv/
-vibebien/
+env/
+pyenv/
+vivebien/
 
-# Cachés de Python
+# Python cache
 __pycache__/
 *.pyc
 
-# Config VSCode
+# Data local o bases de datos
+*.db
+
+# Models (pesan mucho, no se suben)
+models/
+
+# Archivos de audio temporales
+*.wav
+*.mp3
+*.m4a
+*.aiff
+
+# Archivos de VSCode
 .vscode/
+
+# Archivos del sistema
+.DS_Store
