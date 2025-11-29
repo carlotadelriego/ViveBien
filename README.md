@@ -21,17 +21,26 @@ El sistema combina análisis emocional, simulación de métricas de bienestar, c
   - Arquitectura modular y uso de st.session_state para persistencia de estado.
 
 **Cómo ejecutar el proyecto (local)**:
-1. **Clonar el repositorio**:
-. git clone https://github.com/carlotadelriego/ViveBien.git
-. cd ViveBien
-3. **Crear un entorno virtual (opcional pero recomendado)**:
-. python -m venv venv
-. source venv/bin/activate   # Mac/Linux  
-. venv\Scripts\activate      # Windows
-4. **Instalar dependencias**:
-. pip install -r requirements.txt
-5. **Ejecutar la aplicación**:
-. streamlit run vivebien_main.py
+**Cómo ejecutar el proyecto (local)**:
+1. **Clonar el repositorio:**
+   ```bash
+   git clone https://github.com/carlotadelriego/ViveBien.git
+   cd ViveBien
+   ```
+2. Crear un entorno virtual (opcional pero recomendado):
+    ```bash
+    python -m venv venv
+    source venv/bin/activate   # Mac/Linux
+    venv\Scripts\activate      # Windows
+    ```
+3. Instalar dependencias:
+    ```bash
+    pip install -r requirements.txt
+    ```
+4. Ejecutar la aplicación:
+    ```bash
+    streamlit run vivebien_main.py
+    ```
 **Nota**: la primera carga del modelo emocional puede tardar unos segundos por inicialización.
 
 **Notas técnicas**:
