@@ -10,7 +10,7 @@ from llama_cpp import Llama
 from llama_cpp import Llama
 
 llm = Llama(
-    model_path="/Users/carlotafernandez/Desktop/UIE/3º/Code/Sistemas_Portfolio/ViveBien/proyecto/models/gemma-2b-it.Q4_K_M.gguf",
+    model_path="./models/gemma-2b-it-Q4_K_M.gguf",
     n_ctx=2048,
     n_threads=8,       # depende de tu CPU
     temperature=0.7,

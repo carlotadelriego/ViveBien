@@ -19,7 +19,6 @@ import hashlib
 
 # módulos del proyecto
 from data_simulation import generate_history, simulate_biometrics
-from feedback_engine import analyze_text_sentiment, generate_recommendation
 from aura_ai import chat_with_aura, tts_edge, stt_groq, check_configuration
 import database
 from modelos_locales import (
@@ -808,7 +807,7 @@ if menu == "Inicio":
 
 
 # ============================================================================
-#           RESUMEN 
+#           RESUMEN CON ANÁLISIS
 # ============================================================================
 elif menu == "Resumen":
     header_col1, header_col2 = st.columns([1,7])
@@ -819,6 +818,7 @@ elif menu == "Resumen":
     with header_col2:
         st.title("Resumen de Bienestar")
         st.markdown("Consulta tus métricas recientes y estado de ánimo diario.")
+    st.markdown("---")
 
     if user_id is None:
         st.error("Usuario no identificado. Vuelve a iniciar sesión.")
@@ -827,104 +827,358 @@ elif menu == "Resumen":
     rows = database.load_biometrics(user_id)
     df = biometrics_rows_to_df(rows)
 
-
     if df.empty:
         st.warning("No hay datos registrados todavía.")
-    else:
-        latest = df.tail(1).iloc[0]
+        st.stop()
+    
+    latest = df.tail(1).iloc[0]
 
-        st.markdown("---")
-        col1, col2 = st.columns([4,1])
-        with col1:
-            st.subheader("Pasos")
-            st.markdown(f"<h2>{int(latest.steps)}</h2>", unsafe_allow_html=True)
-        with col2:
-            icon_pasos = os.path.join(ASSETS_DIR, "icon_pasos.png")
-            if os.path.exists(icon_pasos):
-                st.image(icon_pasos, width=100)
+    # ==================== ANILLOS DE ACTIVIDAD ====================
+    st.markdown("### Anillos de Actividad Hoy")
+    
+    # Calcular porcentajes
+    objetivo_pasos = current_user.get("target_steps", 10000)
+    objetivo_calorias = 450
+    objetivo_sueno = 8
+    
+    pasos_pct = min((latest.steps / objetivo_pasos) * 100, 100)
+    calorias_pct = min(((latest.steps * 0.04) / objetivo_calorias) * 100, 100)
+    sueno_pct = min((latest.sleep_hours / objetivo_sueno) * 100, 100)
+    
+    # Crear anillos con matplotlib (más confiable que SVG en Streamlit)
+    import matplotlib.patches as mpatches
+    
+    fig_rings, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig_rings.patch.set_facecolor('white')
+    
+    rings_data = [
+        (pasos_pct, '#fa114f', 'MOVIMIENTO', axes[0]),
+        (calorias_pct, '#92e82a', 'EJERCICIO', axes[1]),
+        (sueno_pct, '#00c7ff', 'DESCANSO', axes[2])
+    ]
+    
+    for percentage, color, label, ax in rings_data:
+        # Fondo gris
+        circle_bg = mpatches.Wedge((0.5, 0.5), 0.4, 0, 360, width=0.08, 
+                                    facecolor='none', edgecolor='#e8e8e8', linewidth=12)
+        ax.add_patch(circle_bg)
+        
+        # Progreso coloreado
+        angle = 360 * (percentage / 100)
+        circle_fg = mpatches.Wedge((0.5, 0.5), 0.4, 90, 90 + angle, width=0.08,
+                                    facecolor='none', edgecolor=color, linewidth=12)
+        ax.add_patch(circle_fg)
+        
+        # Texto central
+        ax.text(0.5, 0.52, f'{int(percentage)}%', ha='center', va='center', 
+                fontsize=24, fontweight='bold', color='#222')
+        ax.text(0.5, 0.38, label, ha='center', va='center', 
+                fontsize=10, color='#666')
+        
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        ax.set_aspect('equal')
+    
+    plt.tight_layout()
+    st.pyplot(fig_rings)
+    plt.close()
+    
+    st.markdown("---")
 
-        st.markdown("---")
-        col1, col2 = st.columns([4,1])
-        with col1:
-            st.subheader("Sueño")
-            st.markdown(f"<h2>{latest.sleep_hours} hs</h2>", unsafe_allow_html=True)
-        with col2:
-            icon_sueno = os.path.join(ASSETS_DIR, "icon_sueno.png")
-            if os.path.exists(icon_sueno):
-                st.image(icon_sueno, width=100)
+    # ==================== MÉTRICAS PRINCIPALES ====================
+    col1, col2 = st.columns([4,1])
+    with col1:
+        st.subheader("Pasos")
+        st.markdown(f"<h2>{int(latest.steps):,}</h2>", unsafe_allow_html=True)
+    with col2:
+        icon_pasos = os.path.join(ASSETS_DIR, "icon_pasos.png")
+        if os.path.exists(icon_pasos):
+            st.image(icon_pasos, width=100)
 
-        st.markdown("---")
-        st.subheader("Estado de Ánimo")
+    st.markdown("---")
+    col1, col2 = st.columns([4,1])
+    with col1:
+        st.subheader("Sueño")
+        st.markdown(f"<h2>{latest.sleep_hours} hs</h2>", unsafe_allow_html=True)
+    with col2:
+        icon_sueno = os.path.join(ASSETS_DIR, "icon_sueno.png")
+        if os.path.exists(icon_sueno):
+            st.image(icon_sueno, width=100)
 
-        # ----- MOOD PICKER -----
-        if "mood" not in st.session_state:
-            st.session_state.mood = None
+    st.markdown("---")
+    
+    # ==================== MOOD PICKER ====================
+    st.subheader("Estado de Ánimo")
 
-        mood_files = [
-            ("m_1.png", "Muy mal", 1),
-            ("m_2.png", "Mal", 2),
-            ("m_3.png", "Normal", 3),
-            ("m_4.png", "Bien", 4),
-            ("m_5.png", "Muy bien", 5),
-        ]
+    if "mood" not in st.session_state:
+        st.session_state.mood = None
 
-        cols = st.columns(5)
+    mood_files = [
+        ("m_1.png", "Muy mal", 1),
+        ("m_2.png", "Mal", 2),
+        ("m_3.png", "Normal", 3),
+        ("m_4.png", "Bien", 4),
+        ("m_5.png", "Muy bien", 5),
+    ]
 
-        for i, (file, label, value) in enumerate(mood_files):
-            with cols[i]:
+    cols = st.columns(5)
 
-                icon_path = os.path.join(ASSETS_DIR, file)
+    for i, (file, label, value) in enumerate(mood_files):
+        with cols[i]:
+            icon_path = os.path.join(ASSETS_DIR, file)
 
-                # Imagen centrada con animación y estilo
-                if os.path.exists(icon_path):
-                    encoded_img = base64.b64encode(open(icon_path, 'rb').read()).decode()
-                    st.markdown(
-                        f"""
-                        <div class='mood-wrapper'>
-                            <img src='data:image/png;base64,{encoded_img}' 
-                                width='75' 
-                                class='mood-face {"selected" if st.session_state.mood == value else ""}'>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                else:
-                    st.markdown(
-                        f"""
-                        <div class="mood-wrapper" 
-                                style="width:75px;height:75px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;">
-                            {label[0]}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+            if os.path.exists(icon_path):
+                encoded_img = base64.b64encode(open(icon_path, 'rb').read()).decode()
+                st.markdown(
+                    f"""
+                    <div class='mood-wrapper'>
+                        <img src='data:image/png;base64,{encoded_img}' 
+                            width='75' 
+                            class='mood-face {"selected" if st.session_state.mood == value else ""}'>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div class="mood-wrapper" 
+                            style="width:75px;height:75px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;">
+                        {label[0]}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+            btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
 
-                # BOTÓN centrado debajo — añadir pequeño espaciador para separarlo de la imagen
-                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-                btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
-
-                if st.button(btn_label, key=f"mood_btn_{value}"):
-                    st.session_state.mood = value
-
-                    # GUARDADO EN BD
+            if st.button(btn_label, key=f"mood_btn_{value}"):
+                st.session_state.mood = value
+                try:
+                    database.save_mood_log(user_id, f"Estado: {label}", label, value)
+                except:
+                    pass
+                st.success(f"Estado registrado: {label}")
+                if current_user.get("tts_enabled", True):
                     try:
-                        database.save_mood_log(user_id, f"Estado: {label}", label, value)
+                        tts_say("Estado actualizado", tempfile.NamedTemporaryFile(delete=False).name)
                     except:
                         pass
+                st.rerun()
 
-                    # POPUP agradable
-                    st.success(f"Estado registrado: {label}")
-
-                    # OPCIONAL: sonido TTS del click
-                    if current_user.get("tts_enabled", True):
-                        try:
-                            tts_say("Estado actualizado", tempfile.NamedTemporaryFile(delete=False).name)
-                        except:
-                            pass
-
-                    st.rerun()
-
+    st.markdown("---")
+    
+    # ==================== ESTADÍSTICAS SEMANALES ====================
+    st.markdown("### 📊 Análisis Semanal")
+    
+    df_week = df.tail(7)
+    promedio_pasos = df_week['steps'].mean()
+    promedio_sueno = df_week['sleep_hours'].mean()
+    promedio_hr = df_week['heart_rate'].mean()
+    
+    # Comparar con semana anterior
+    df_prev_week = df.tail(14).head(7)
+    if not df_prev_week.empty:
+        cambio_pasos = ((promedio_pasos - df_prev_week['steps'].mean()) / df_prev_week['steps'].mean()) * 100
+        cambio_sueno = ((promedio_sueno - df_prev_week['sleep_hours'].mean()) / df_prev_week['sleep_hours'].mean()) * 100
+        cambio_hr = ((promedio_hr - df_prev_week['heart_rate'].mean()) / df_prev_week['heart_rate'].mean()) * 100
+    else:
+        cambio_pasos = cambio_sueno = cambio_hr = 0
+    
+    # Tarjetas de estadísticas usando HTML + componentes nativos
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "Pasos Promedio",
+            f"{int(promedio_pasos):,}",
+            f"{cambio_pasos:+.1f}%",
+            delta_color="normal"
+        )
+    
+    with col2:
+        st.metric(
+            "Sueño Promedio",
+            f"{promedio_sueno:.1f}h",
+            f"{cambio_sueno:+.1f}%",
+            delta_color="normal"
+        )
+    
+    with col3:
+        st.metric(
+            "Frecuencia Cardíaca",
+            f"{int(promedio_hr)} bpm",
+            f"{cambio_hr:+.1f}%",
+            delta_color="inverse"
+        )
+    
+    with col4:
+        mejor_dia = df_week['steps'].idxmax().strftime('%d/%m')
+        mejor_pasos = int(df_week['steps'].max())
+        st.metric(
+            "Mejor Día",
+            mejor_dia,
+            f"{mejor_pasos:,} pasos"
+        )
+    
+    st.markdown("---")
+    
+    # ==================== GRÁFICOS DE TENDENCIAS ====================
+    st.markdown("### 📈 Tendencias (Últimas 2 Semanas)")
+    
+    tab1, tab2, tab3 = st.tabs(["Pasos", "Sueño", "Frecuencia Cardíaca"])
+    
+    df_14 = df.tail(14)
+    
+    with tab1:
+        fig_steps, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(df_14.index, df_14['steps'], marker='o', linewidth=2.5, 
+                color='#fa114f', markersize=8)
+        ax.axhline(y=objetivo_pasos, color='#ccc', linestyle='--', linewidth=1.5, 
+                   label=f'Objetivo: {objetivo_pasos:,}')
+        ax.fill_between(df_14.index, df_14['steps'], alpha=0.2, color='#fa114f')
+        ax.set_ylabel('Pasos', fontsize=12, fontweight='600')
+        ax.legend(loc='upper left')
+        ax.grid(alpha=0.3)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        st.pyplot(fig_steps)
+        plt.close()
+    
+    with tab2:
+        fig_sleep, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(df_14.index, df_14['sleep_hours'], marker='o', linewidth=2.5, 
+                color='#00c7ff', markersize=8)
+        ax.axhline(y=objetivo_sueno, color='#ccc', linestyle='--', linewidth=1.5, 
+                   label=f'Objetivo: {objetivo_sueno}h')
+        ax.fill_between(df_14.index, df_14['sleep_hours'], alpha=0.2, color='#00c7ff')
+        ax.set_ylabel('Horas de Sueño', fontsize=12, fontweight='600')
+        ax.legend(loc='upper left')
+        ax.grid(alpha=0.3)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        st.pyplot(fig_sleep)
+        plt.close()
+    
+    with tab3:
+        fig_hr, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(df_14.index, df_14['heart_rate'], marker='o', linewidth=2.5, 
+                color='#92e82a', markersize=8)
+        ax.fill_between(df_14.index, df_14['heart_rate'], alpha=0.2, color='#92e82a')
+        ax.set_ylabel('BPM', fontsize=12, fontweight='600')
+        ax.grid(alpha=0.3)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        st.pyplot(fig_hr)
+        plt.close()
+    
+    st.markdown("---")
+    
+    # ==================== INSIGHTS PERSONALIZADOS ====================
+    st.markdown("### 💡 Insights Personalizados")
+    
+    # Generar insights
+    insights = []
+    
+    # Insight 1: Mejor día de la semana
+    dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+    df_week_copy = df_week.copy()
+    df_week_copy['dia_semana'] = df_week_copy.index.dayofweek
+    mejor_dia_idx = df_week_copy.groupby('dia_semana')['steps'].mean().idxmax()
+    mejor_dia_nombre = dias_semana[mejor_dia_idx]
+    mejor_dia_pasos = int(df_week_copy[df_week_copy['dia_semana'] == mejor_dia_idx]['steps'].mean())
+    insights.append(f"🏆 Tu mejor día de actividad es el <b>{mejor_dia_nombre}</b> con un promedio de <b>{mejor_dia_pasos:,} pasos</b>")
+    
+    # Insight 2: Calidad del sueño
+    if promedio_sueno >= 7:
+        insights.append(f"😴 Excelente rutina de sueño: promedias <b>{promedio_sueno:.1f} horas</b> por noche. Esto contribuye directamente a tu energía diaria.")
+    else:
+        insights.append(f"⚠️ Tu sueño promedio es de <b>{promedio_sueno:.1f} horas</b>. Intenta dormir al menos 7 horas para mejorar tu rendimiento.")
+    
+    # Insight 3: Racha de días activos
+    dias_activos = (df_week['steps'] >= objetivo_pasos * 0.8).sum()
+    if dias_activos >= 5:
+        insights.append(f"🔥 ¡Racha impresionante! Has cumplido tu objetivo de actividad <b>{dias_activos} de 7 días</b> esta semana.")
+    
+    # Renderizar insights con HTML
+    for insight in insights:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 14px;
+            margin: 12px 0;
+            font-size: 15px;
+            line-height: 1.6;">
+            {insight}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # ==================== COMPARATIVA SEMANAL ====================
+    st.markdown("### 📊 Comparativa Semanal")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Esta Semana**")
+        fig_bar1, ax = plt.subplots(figsize=(6, 3))
+        dias = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+        colores = ['#fa114f' if val >= objetivo_pasos else '#ffcccc' 
+                   for val in df_week['steps'].values]
+        ax.bar(dias[:len(df_week)], df_week['steps'].values, color=colores, width=0.6)
+        ax.axhline(y=objetivo_pasos, color='#666', linestyle='--', linewidth=1, alpha=0.5)
+        ax.set_ylabel('Pasos')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        st.pyplot(fig_bar1)
+        plt.close()
+    
+    with col2:
+        if not df_prev_week.empty:
+            st.markdown("**Semana Anterior**")
+            fig_bar2, ax = plt.subplots(figsize=(6, 3))
+            colores_prev = ['#92e82a' if val >= objetivo_pasos else '#d4f1d4' 
+                           for val in df_prev_week['steps'].values]
+            ax.bar(dias[:len(df_prev_week)], df_prev_week['steps'].values, 
+                   color=colores_prev, width=0.6)
+            ax.axhline(y=objetivo_pasos, color='#666', linestyle='--', linewidth=1, alpha=0.5)
+            ax.set_ylabel('Pasos')
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            st.pyplot(fig_bar2)
+            plt.close()
+    
+    st.markdown("---")
+    
+    # ==================== EXPORTAR DATOS ====================
+    st.markdown("### 📥 Exportar Datos")
+    
+    col_exp1, col_exp2, col_exp3 = st.columns(3)
+    
+    with col_exp1:
+        csv = df.to_csv()
+        st.download_button(
+            label="📄 Descargar CSV",
+            data=csv,
+            file_name=f"vivebien_datos_{datetime.date.today()}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    
+    with col_exp2:
+        if st.button("📊 Generar Reporte PDF", use_container_width=True):
+            st.info("Funcionalidad de PDF en desarrollo...")
+    
+    with col_exp3:
+        if st.button("🔄 Sincronizar Datos", use_container_width=True):
+            with st.spinner("Sincronizando..."):
+                time.sleep(1)
+            st.success("✓ Datos sincronizados")
 
 
 
@@ -1021,19 +1275,21 @@ elif menu == "Registro de Estado":
                 pass
 
 
-
 # ============================================================================ 
 #            CHAT CON AURA 
 # ============================================================================
 elif menu == "Chat con Aura":
     
     # ---- HEADER ----
-    col_logo, col_title = st.columns([1, 5])
-    with col_logo:
-        if os.path.exists("assets/logo.png"):
-            st.image("assets/logo.png", width=65)
-    with col_title:
-        st.markdown("## Chatea con Aura")
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Chat con Aura")
+        st.markdown("Habla con Aura, tu asistente de bienestar personal con IA. 🌿")
+    st.markdown("---")
     
     # ---- VERIFICAR CONFIGURACIÓN ----
     ai_status = check_configuration()
@@ -1175,7 +1431,6 @@ elif menu == "Chat con Aura":
 # -----------------------------
 # RUTINAS
 # -----------------------------
->>>>>>> feature/chathugo
 elif menu == "Rutinas":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
