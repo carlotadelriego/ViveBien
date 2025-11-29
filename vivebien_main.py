@@ -1,7 +1,5 @@
 # -----------------------------------------------
 #  VIVEBIEN — Plataforma de Bienestar Multimodal
-#  Mockup exacto (Login centrado, sin JS)
-# python -m streamlit run vivebien_main.py
 # -----------------------------------------------
 
 import streamlit as st
@@ -9,16 +7,22 @@ import tempfile, os, subprocess, shutil, time
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
-ASSETS_DIR = os.path.join(os.getcwd(), "assets")
-
-
-# módulos del proyecto (asegúrate de tenerlos en la misma carpeta)
+import base64
+import datetime
+import math
 from data_simulation import generate_history, simulate_biometrics
-from feedback_engine import analyze_text_sentiment, generate_recommendation
 import database
+from modelos_locales import (
+    analyze_text_sentiment,
+    transcribe_audio,
+    generate_recommendation
+)
 
-st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="centered")
+
+ASSETS_DIR = os.path.join(os.getcwd(), "assets")
+st.set_page_config(page_title="ViveBien", page_icon="🌿", layout="wide")
 AURA_NAME = "Aura"
+
 
 # ---------- TTS (pyttsx3 o 'say') ----------
 try:
@@ -58,9 +62,85 @@ def tts_say(text: str, filename: str):
 # -----------------------------
 database.init_db()
 
+
 # -----------------------------
-# helpers
+# CALENDARIO
 # -----------------------------
+import datetime
+
+# Obtener fecha actual
+today = datetime.date.today()
+weekday_labels = ["L", "M", "X", "J", "V", "S", "D"]
+
+# Generar los 7 días (lunes–domingo)
+start_of_week = today - datetime.timedelta(days=today.weekday())
+week_days = [start_of_week + datetime.timedelta(days=i) for i in range(7)]
+
+# CSS calendario estilo Vantage Fit
+st.markdown("""
+<style>
+.calendar-box {
+    background: white;
+    padding: 15px 10px 5px 10px;
+    border-radius: 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.cal-day {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 3px;
+}
+
+.cal-number {
+    font-size: 18px;
+    color: #444;
+    padding: 4px 10px;
+    border-radius: 50%;
+}
+
+.cal-selected {
+    background: #ff6b6b;
+    color: white !important;
+}
+
+.cal-date-label {
+    margin-top: 6px;
+    color: #777;
+    font-size: 13px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+# -----------------------------
+# session_state inicial
+# -----------------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "last_recommendation" not in st.session_state:
+    st.session_state.last_recommendation = ""
+if "menu" not in st.session_state:
+    st.session_state.menu = "Inicio"
+if "show_register" not in st.session_state:
+    st.session_state.show_register = False
+# accesibilidad: valores por defecto (se pueden cargar desde DB al iniciar sesión)
+if "accesibilidad" not in st.session_state:
+    st.session_state.accesibilidad = {
+        "font_size": "Normal",
+        "dark_mode": False,
+        "tts_enabled": True,
+        "high_contrast": False
+    }
+
+# helper para gráficos y datos
 def plot_biometrics_df(df: pd.DataFrame):
     fig, ax = plt.subplots(3,1, figsize=(6,8), constrained_layout=True)
     if not df.empty:
@@ -80,235 +160,158 @@ def biometrics_rows_to_df(rows):
     df.set_index('date', inplace=True)
     return df
 
-# -----------------------------
-# session state inicial
-# -----------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "last_recommendation" not in st.session_state:
-    st.session_state.last_recommendation = ""
-if "menu" not in st.session_state:
-    st.session_state.menu = "Inicio"
-if "show_register" not in st.session_state:
-    st.session_state.show_register = False
 
 # -----------------------------
-# GLOBAL STYLE (centrado robusto)
+# APLICACIÓN GLOBAL DE ACCESIBILIDAD (después de inicializar session_state)
+# -----------------------------
+size_map = {"Pequeño": "14px", "Normal": "18px", "Grande": "22px"}
+base_font = size_map.get(st.session_state.accesibilidad.get("font_size", "Normal"), "18px")
+
+st.markdown(f"""
+    <style>
+        /* Solo texto normal y controles (no tocamos directamente h1/h2/h3) */
+        body, p, li, .stTextInput, .stTextArea, .stSlider, .stButton>button, .stSelectbox, .stMarkdown {{
+            font-size: {base_font} !important;
+        }}
+
+        /* Mantener jerarquía de títulos en proporción al base_font */
+        h1, .stMarkdown h1 {{ font-size: calc({base_font} * 2.0) !important; }}
+        h2, .stMarkdown h2 {{ font-size: calc({base_font} * 1.6) !important; }}
+        h3, .stMarkdown h3 {{ font-size: calc({base_font} * 1.3) !important; }}
+    </style>
+""", unsafe_allow_html=True)
+
+# Modo oscuro y contraste alto: aplicar cambios seguros
+if st.session_state.accesibilidad.get("dark_mode", False):
+    st.markdown("""
+        <style>
+            [data-testid="stAppViewContainer"] { background-color: #0f0f0f !important; color: #eaeaea !important; }
+            [data-testid="stSidebar"] > div:first-child { background-color: rgba(20,20,20,0.95) !important; color: #eaeaea !important; }
+            .stButton>button { color: inherit; }
+        </style>
+    """, unsafe_allow_html=True)
+
+if st.session_state.accesibilidad.get("high_contrast", False):
+    st.markdown("""
+        <style>
+            [data-testid="stAppViewContainer"] { background-color: #000 !important; color: #FFD700 !important; }
+            a, .stButton>button { color: #FFD700 !important; font-weight:700; }
+        </style>
+    """, unsafe_allow_html=True)
+
+
+# -----------------------------
+# GLOBAL STYLE (limpio y seguro)
 # -----------------------------
 GLOBAL_STYLE = """
 <style>
+/* Estilos visuales seguros (evitamos .main y position:absolute) */
 
-/* Logo circular (just spacing) */
-.login-logo {
-    width: 140px;
-    margin-bottom: 6px;
-}
+.login-logo { width: 140px; margin-bottom: 6px; }
+.login-title { font-size: 26px; font-weight: 600; margin-bottom: 18px; }
+.login-label { font-weight: 600; text-align: left; margin: 0; margin-top: 10px; font-size: 15px; }
+.login-input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ccc; margin-top: 6px; font-size: 15px; }
+.btn-login { background: #dff3e6; border: none; width: 100%; padding: 12px; border-radius: 10px; margin-top: 18px; font-size: 17px; font-weight: 600; cursor: pointer; }
+.divider { margin-top: 14px; color: #666; font-weight: 600; }
+.social-row { display:flex; gap: 10px; margin-top: 12px; }
+.social-btn { flex: 1; padding: 12px; border-radius: 10px; border: none; font-weight: 600; font-size: 15px; cursor: pointer; }
+.google { background: #4285F4 !important; color: white !important; }
+.apple  { background: #FF6B6B !important; color: white !important; }
+.bottom-links { display:flex; justify-content:space-between; margin-top: 12px; font-size: 14px; font-weight: 600; }
+.link { cursor: pointer; color: #222; }
 
-/* Título */
-.login-title {
-    font-size: 26px;
-    font-weight: 600;
-    margin-bottom: 18px;
-}
-
-/* Labels e inputs */
-.login-label {
-    font-weight: 600;
-    text-align: left;
-    margin: 0;
-    margin-top: 10px;
-    font-size: 15px;
-}
-.login-input {
-    width: 100%;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid #ccc;
-    margin-top: 6px;
-    font-size: 15px;
-}
-
-/* Botón principal */
-.btn-login {
-    background: #dff3e6;
-    border: none;
-    width: 100%;
-    padding: 12px;
-    border-radius: 10px;
-    margin-top: 18px;
-    font-size: 17px;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-/* Divider text */
-.divider {
-    margin-top: 14px;
-    color: #666;
-    font-weight: 600;
-}
-
-/* Social buttons */
-.social-row {
-    display:flex;
-    gap: 10px;
-    margin-top: 12px;
-}
-.social-btn {
-    flex: 1;
-    padding: 12px;
-    border-radius: 10px;
-    border: none;
-    font-weight: 600;
-    font-size: 15px;
-    cursor: pointer;
-}
-
-/* Google = azul real */
-.google { 
-    background: #4285F4 !important; 
-    color: white !important;
-}
-
-/* Apple = rojo suave */
-.apple  { 
-    background: #FF6B6B !important; 
-    color: white !important;
-}
-
-/* bottom links */
-.bottom-links {
-    display:flex;
-    justify-content:space-between;
-    margin-top: 12px;
-    font-size: 14px;
-    font-weight: 600;
-}
-.link {
-    cursor: pointer;
-    color: #222;
-}
-
-
-/* Chat and rutina small helpers */
-.chat-card {
-    max-width: 650px;
-    margin: 20px auto;
-    padding: 18px;
-    border-radius: 22px;
-    border: 8px solid #e6e6e6;
-    background: white;
-}
+.chat-card { max-width: 650px; margin: 20px auto; padding: 18px; border-radius: 22px; border: 8px solid #e6e6e6; background: white; }
 .msg-user { background:#fff; padding:10px 14px; border-radius:12px; border:2px solid #ddd; width:fit-content; margin:8px 0; }
 .msg-aura { background:#e0f6d9; padding:10px 14px; border-radius:12px; border:2px solid #c4e8c1; width:fit-content; margin:8px 0; margin-left:auto; }
 
 .rutina-card { background:white; padding:14px; border-radius:14px; margin-bottom:12px; display:flex; border:1px solid #f0f0f0; box-shadow:0 2px 6px rgba(0,0,0,0.04); align-items:center; }
 .rutina-img { width:84px; height:84px; border-radius:12px; object-fit:cover; margin-right:12px; }
 
+.inicio-container { max-width: 900px; margin: 0 auto; padding: 24px; background: rgba(255,255,255,0.95); border-radius: 18px; box-shadow: 0 6px 18px rgba(0,0,0,0.04); }
+.mood-face { cursor: pointer; opacity: 0.6; transition: all 0.12s ease-in-out; }
+.mood-face.selected { opacity: 1; transform: scale(1.05); box-shadow: 0 6px 14px rgba(0,0,0,0.08); border-radius:12px; }
+
 </style>
 """
 st.markdown(GLOBAL_STYLE, unsafe_allow_html=True)
 
-# ------------ ESTILO DEL MOCKUP PARA EL RESUMEN -------------
 st.markdown("""
 <style>
 
-h2 {
-    font-size: 32px;
-    font-weight: 700;
-}
-
-.card {
-    background: #ffffff;
-    border: 2px solid #CBD5CE;
-    padding: 18px;
-    border-radius: 18px;
-    margin-bottom: 18px;
-}
-
-.recommend-box {
-    background: #FFF7C7;
-    padding: 18px;
-    border-radius: 18px;
-    border: 2px solid #E6DFA4;
-    font-size: 20px;
+.mood-wrapper { 
     text-align: center;
-    margin-top: 10px;
 }
 
-.big-btn {
-    background: #E9E9E9;
-    padding: 16px;
-    border-radius: 18px;
-    font-size: 20px;
-    text-align: center;
-    border: 2px solid #B6B6B6;
-    margin-top: 12px;
-}
-
-.mood-container {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 10px;
-}
-
-.mood-container img {
-    width: 45px;
+.mood-face {
     cursor: pointer;
-    opacity: 0.4;
+    opacity: 0.55;
+    transition: all 0.20s ease-in-out;
+    border-radius: 5px;
 }
 
-.mood-selected {
+.mood-face:hover {
+    opacity: 0.9;
+    transform: scale(1.07);
+}
+
+.mood-face.selected {
     opacity: 1 !important;
+    transform: scale(1.12);
+    box-shadow: 0 8px 18px rgba(0,0,0,0.18);
+    border-radius: 16px;
+}
+
+.mood-btn {
+    margin-top: 8px;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
 
+
 # -----------------------------
-# RENDER LOGIN (Mockup exacto)
+# RENDER LOGIN (centrado, seguro)
 # -----------------------------
 def render_login_screen():
-    st.markdown("<div class='fullscreen-center'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-card'>", unsafe_allow_html=True)
-
-    # logo (assets/logo.png)
-    if os.path.exists("assets/logo.png"):
-        st.image("assets/logo.png", width=140)
+    if os.path.exists(os.path.join(ASSETS_DIR, "logo.png")):
+        st.image(os.path.join(ASSETS_DIR, "logo.png"), width=140)
     else:
         st.markdown("<div style='width:140px;height:140px;border-radius:50%;background:#eaf6ec;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:40px;'>🧘</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='login-title'>ViveBien</div>", unsafe_allow_html=True)
 
-    # Email
     st.markdown("<div class='login-label'>Email</div>", unsafe_allow_html=True)
     email = st.text_input("email_input", placeholder="nombre@ejemplo.com", label_visibility="collapsed")
 
-    # Password
     st.markdown("<div class='login-label'>Contraseña</div>", unsafe_allow_html=True)
     password = st.text_input("pass_input", placeholder="••••••••••", type="password", label_visibility="collapsed")
 
-    # Botón acceder
     if st.button("Acceder", use_container_width=True):
         if not email or not password:
             st.warning("Completa los campos.")
         else:
             ok, msg, user_info = database.login_user(email.strip(), password)
             if ok:
+                # cargar preferencias desde DB si existen
                 st.session_state.logged_in = True
                 st.session_state.user = user_info
+                # si la BD contiene preferencias de accesibilidad, las cargamos
+                if user_info:
+                    # merge de accesibilidad sin perder claves
+                    prefs = {
+                        "font_size": user_info.get("font_size", st.session_state.accesibilidad["font_size"]),
+                        "dark_mode": user_info.get("dark_mode", st.session_state.accesibilidad["dark_mode"]),
+                        "tts_enabled": user_info.get("tts_enabled", st.session_state.accesibilidad["tts_enabled"]),
+                        "high_contrast": user_info.get("high_contrast", st.session_state.accesibilidad["high_contrast"])
+                    }
+                    st.session_state.accesibilidad.update(prefs)
                 st.session_state.menu = "Inicio"
                 st.session_state.chat_history = []
                 st.rerun()
             else:
                 st.error(msg)
 
-    # Bottom links: Olvidaste / Unete
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("<div class='link'>¿Olvidaste tu contraseña?</div>", unsafe_allow_html=True)
@@ -317,27 +320,20 @@ def render_login_screen():
             st.session_state.show_register = True
             st.rerun()
 
-
-    # Divider
     st.markdown("<div class='divider'>o continúa con</div>", unsafe_allow_html=True)
 
-    # Social buttons (visual)
     colg, cola = st.columns(2)
     with colg:
         st.button("Google", use_container_width=True)
     with cola:
         st.button("Apple ID", use_container_width=True)
 
-
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # -----------------------------
-# RENDER REGISTER (centrado, mockup-style)
+# RENDER REGISTER
 # -----------------------------
 def render_register_screen():
-    st.markdown("<div class='fullscreen-center'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-card' style='width:520px;'>", unsafe_allow_html=True)
-
     st.header("Crear cuenta")
 
     name_reg = st.text_input("Nombre", key="reg_name_ui")
@@ -358,7 +354,6 @@ def render_register_screen():
                     st.session_state.user = user_info
                     st.session_state.logged_in = True
                     st.session_state.menu = "Inicio"
-
                     # generar datos iniciales de ejemplo
                     hist = generate_history(days=14)
                     for idx, row in hist.iterrows():
@@ -393,171 +388,438 @@ if not st.session_state.logged_in:
         render_login_screen()
         st.stop()
 
+
 # -----------------------------
-# Sidebar (aparece solo después de login)
+# Sidebar
 # -----------------------------
+def _update_menu():
+    st.session_state.menu = st.session_state._menu_radio
+
 with st.sidebar:
     st.title("ViveBien 🌿")
-    st.write(f"Hola, {st.session_state.user['name']}")
+    if st.session_state.user:
+        st.write(f"Hola, {st.session_state.user.get('name','')}")
+
     st.markdown("---")
-    st.session_state.menu = st.radio("Navegación", ["Inicio","Resumen","Registro de Estado","Chat con Aura","Rutinas","Perfil"])
+    # radio con key y on_change para evitar rebotes y requerir 2 clics
+    options = ["Inicio","Resumen","Registro de Estado","Chat con Aura","Rutinas","Perfil"]
+    default_index = options.index(st.session_state.menu) if st.session_state.menu in options else 0
+    st.radio("Navegación", options, index=default_index, key="_menu_radio", on_change=_update_menu)
+
     if st.button("Cerrar sesión"):
         st.session_state.logged_in = False
         st.session_state.user = None
         st.session_state.chat_history = []
-        st.session_state.menu = "Resumen"
+        st.session_state.menu = "Inicio"
         st.rerun()
 
-# -----------------------------
-# Recuperar datos de usuario
-# -----------------------------
+# actualizar variables locales después del sidebar
 current_user = st.session_state.user
-user_id = current_user["user_id"]
+user_id = current_user["user_id"] if current_user else None
 menu = st.session_state.menu
 
 
 
+
 # -----------------------------
-# INICIO
+# PÁGINAS
 # -----------------------------
+# ============================================================================
+# ----- INICIO -----
+# ============================================================================
 if menu == "Inicio":
+
+    header_col1, header_col2 = st.columns([1,6])
+
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+
+    with header_col2:
+        st.markdown("""
+        <div class='header-flex'>
+            <div>
+                <h1 style="margin:0;margin-top:-40px;">Bienvenid@ a ViveBien🌿</h1>
+                <p style="margin:0; margin-top:-10px;">Tu espacio personal para cuidar tu bienestar diario.</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("   ", unsafe_allow_html=True)
+    
+
+    # -----------------------------
+    #   CALENDARIO SUPERIOR
+    # -----------------------------
+    today = datetime.date.today()
+    weekday_labels = ["L", "M", "X", "J", "V", "S", "D"]
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    week_days = [start_of_week + datetime.timedelta(days=i) for i in range(7)]
 
     st.markdown("""
     <style>
-        .inicio-card {
-            background: #ffffff;
-            padding: 35px;
-            border-radius: 22px;
-            border: 2px solid #e6e6e6;
-            max-width: 750px;
-            margin: 0 auto;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-        }
-        .inicio-title {
-            font-size: 34px;
-            font-weight: 700;
-            text-align: center;
-            margin-bottom: 6px;
-        }
-        .inicio-subtitle {
-            font-size: 17px;
-            color: #666;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .reco-box {
-            background: #F8F9D7;
-            padding: 20px;
-            border-radius: 16px;
-            border: 2px solid #ECE9A4;
+        .calendar-box {
+            background: white;
+            padding: 15px 10px 5px 10px;
+            border-radius: 18px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
             margin-bottom: 25px;
-            font-size: 17px;
+            text-align: center;
         }
-        .inicio-buttons {
-            display: flex;
+        .cal-day {
+            font-size: 14px; 
+            color: #888;
+            margin-bottom: 3px;
+        }
+        .cal-number {
+            font-size: 18px;
+            color: #444;
+            width: 36px;              /* ancho fijo */
+            height: 36px;             /* alto fijo → círculo perfecto */
+            display: flex;            /* para centrar el número */
+            align-items: center;
             justify-content: center;
-            gap: 15px;
-            margin-top: 10px;
+            border-radius: 50%;       /* círculo */
+            margin: 0 auto;           /* centra el círculo */
+            transition: 0.2s;
         }
-        .inicio-btn button {
-            width: 210px !important;
-            padding: 14px !important;
-            font-size: 17px !important;
-            font-weight: 600 !important;
-            border-radius: 14px !important;
+
+        .cal-selected {
+            background: #c5edd2;      /* un verde bonito y más visible */
+            color: white !important;
+            font-weight: 700;         /* destaca más */
+            box-shadow: 0 0 6px rgba(0,0,0,0.15); /* halo ligero */
         }
+
+        .cal-date-label {
+            margin-top: 8px;
+            color: #777;
+            font-size: 13px;
+        }
+
     </style>
     """, unsafe_allow_html=True)
 
 
-    # Título
-    st.markdown(
-        f"<div class='inicio-title'>Bienvenid@, {current_user['name']} 🌿</div>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        "<div class='inicio-subtitle'>Una plataforma inteligente que te acompaña a mejorar tu salud, tus hábitos y tu bienestar emocional.</div>",
-        unsafe_allow_html=True
-    )
+    # -----------------------------
+    # Render calendario
+    # ----------------------------
+    cols = st.columns(7)
 
-    # Recomendación
-    st.markdown("<h4>Recomendación reciente</h4>", unsafe_allow_html=True)
+    for i, day in enumerate(week_days):
+        with cols[i]:
+            st.markdown(f"<div class='cal-day'>{weekday_labels[i]}</div>", unsafe_allow_html=True)
+            if day == today:
+                st.markdown(f"<div class='cal-number cal-selected'>{day.day}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='cal-number'>{day.day}</div>", unsafe_allow_html=True)
 
-    if st.session_state.last_recommendation:
-        st.markdown(
-            f"<div class='reco-box'>{st.session_state.last_recommendation}</div>",
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            "<div class='reco-box'>Aún no hay recomendaciones. Registra tu estado para que Aura pueda ayudarte.</div>",
-            unsafe_allow_html=True
-        )
+    fecha_larga = today.strftime("%A, %d %b %Y")
+    fecha_larga = fecha_larga.replace("Monday","lunes").replace("Tuesday","martes").replace("Wednesday","miércoles")\
+                             .replace("Thursday","jueves").replace("Friday","viernes").replace("Saturday","sábado")\
+                             .replace("Sunday","domingo")\
+                             .replace("Jan","ene").replace("Apr","abr").replace("Aug","ago").replace("Dec","dic")
 
-    # Botones
-    st.markdown("<div class='inicio-buttons'>", unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([1,1,1], gap="medium")
-
-    with col1:
-        if st.button("Registrar estado", key="inicio_registro"):
-            st.session_state.menu = "Registro de Estado"
-            st.rerun()
-
-    with col2:
-        if st.button("Ver resumen", key="inicio_resumen"):
-            st.session_state.menu = "Resumen"
-            st.rerun()
-
-    with col3:
-        if st.button("Chat con Aura", key="inicio_chat"):
-            st.session_state.menu = "Chat con Aura"
-            st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("-----", unsafe_allow_html=True)
 
 
-
-# -----------------------------
-# RESUMEN (Mockup fiel)
-# -----------------------------
-elif menu == "Resumen":
+    # -----------------------------
+    #   MÉTRICAS DEL DÍA
+    # -----------------------------
     rows = database.load_biometrics(user_id)
     df = biometrics_rows_to_df(rows)
 
-    st.image("assets/logo.png", width=70)
-    st.markdown(f"<h2>Holaa, {current_user['name']}</h2>", unsafe_allow_html=True)
+    if df.empty:
+        pasos = 0
+        minutos = 0
+        sleep_hours = 0
+    else:
+        latest = df.tail(1).iloc[0]
+        pasos = int(latest.steps)
+        minutos = int(latest.heart_rate) % 30
+        sleep_hours = latest.sleep_hours
+
+    objetivo_pasos = current_user.get("target_steps", 12000)
+    progreso = pasos / objetivo_pasos
+    progreso = min(max(progreso, 0), 1)
+
+
+    # -----------------------------
+    #   DONUT 
+    # -----------------------------
+    fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
+    ax.pie(
+        [progreso, 1 - progreso],
+        colors=["#c5edd2", "#e6e6e6"],
+        startangle=90, # esto hace que el progreso empiece desde arriba
+        counterclock=False,
+        radius=0.70, # tamaño del donut
+        wedgeprops={"width": 0.17} # grosor del donut
+    )
+
+    ax.text( 
+        0, 0,
+        f"{int(progreso * 70)}%",
+        ha='center',
+        va='center',
+        fontsize=18,
+        fontweight='bold'
+    )
+
+
+    # -----------------------------
+    #   LAYOUT PRINCIPAL (IZQUIERDA + DONUT DERECHA)
+    # -----------------------------
+    col_left, col_right = st.columns([1.3, 1])
+
+    st.markdown("""
+    <style>
+
+        /* ==== SUBIR DONUT Y QUITAR ESPACIADOS ==== */
+
+        /* Subir el contenido de la columna derecha (donde está el donut) */
+        div[data-testid="column"]:nth-of-type(2) > div {
+            padding-top: 0 !important;
+            margin-top: -40px !important;
+        }
+
+        /* Quitar espacio inferior de la columna derecha */
+        div[data-testid="column"]:nth-of-type(2) {
+            margin-bottom: -20px !important;
+        }
+
+        /* Quitar espacio vertical entre el bloque de columnas y lo siguiente */
+        div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="column"]) {
+            margin-bottom: -30px !important;
+            padding-bottom: 0 !important;
+        }
+
+        /* Quitar margen inferior del contenedor de pyplot */
+        div[data-testid="stPyplotChart"] {
+            margin-bottom: -25px !important;
+            padding-bottom: 0 !important;
+        }
+
+
+        /* ==== ESTILOS ORIGINALES ==== */
+
+        .ini-title {
+            font-size: 22px !important;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .ini-sub {
+            font-size: 17px !important;
+            color: #555;
+            margin-bottom: 8px;
+        }
+        .metric-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 17px !important;
+            margin-top: 12px;
+        }
+        .metric-separator {
+            margin-top: 10px;
+            margin-bottom: 5px;
+            border: none;
+            border-top: 1px solid #eee;
+        }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    # ---------------------------
+    # IZQUIERDA 
+    # ---------------------------
+    with col_left:
+
+        # PROGRESO DIARIO
+        st.markdown("<div class='ini-title'>Progreso diario</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-sub'>Haz una pausa para respirar y relajarte 💡</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-sub'>Recuerda: pequeños hábitos crean grandes cambios.</div>", unsafe_allow_html=True)
+
+        # TUS MÉTRICAS
+        st.markdown("<hr class='metric-separator'/>", unsafe_allow_html=True)
+        st.markdown("<div class='ini-title'>Tus métricas</div>", unsafe_allow_html=True)
+
+        # Sueño
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Sueño</span>
+                <span><b>{sleep_hours} h</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Mood
+        mood_dict = {
+            1:"Muy mal 😣 ", 
+            2:"Mal ☹️ ", 
+            3:"Normal 😐", 
+            4:"Bien 🙂", 
+            5:"Muy bien 😄"
+        }
+        mood_label = mood_dict.get(st.session_state.get("mood"), "—")
+
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Mood</span>
+                <span><b>{mood_label}</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+        # ---------- CÁLCULO DE ENERGÍA ----------
+        energy_steps = min(1, pasos / objetivo_pasos) * 40
+        energy_sleep = min(1, sleep_hours / 8) * 30
+        mood_value = st.session_state.get("mood", 3)  # por si es None
+        energy_mood = ((mood_value - 1) / 4) * 20
+
+        hr = int(latest.heart_rate) if not df.empty else "—"
+        if hr != "—":
+            energy_hr = max(0, 10 - (abs(hr - 70) / 70) * 10)
+        else:
+            energy_hr = 5  # valor neutral si no hay datos
+
+        energia = int(energy_steps + energy_sleep + energy_mood + energy_hr)
+        energia = max(0, min(100, energia))
+
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Energía</span>
+                <span><b>{energia}% ⚡</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+        # Frecuencia cardiaca
+        hr = int(latest.heart_rate) if not df.empty else "—"
+        st.markdown(
+            f"""
+            <div class='metric-line'>
+                <span>Frecuencia cardiaca</span>
+                <span><b>{hr} bpm</b></span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Botón de registrar estado
+        st.markdown("<hr class='metric-separator'/>", unsafe_allow_html=True)
+        if st.button("Registrar estado de ánimo", use_container_width=True):
+            st.session_state.menu = "Registro de Estado"
+            st.rerun()
+
+
+# -----------------------------
+#  DERECHA (DONUT + TÍTULO)
+# -----------------------------
+    with col_right:
+
+        st.markdown("""
+            <div id="titulo-donut" style="
+                text-align:center;
+                font-size:26px;
+                font-weight:700;
+                color:#222;">
+                Desafío diario
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.pyplot(fig)
+
+    # === CSS limpio y correcto ===
+    st.markdown("""
+    <style>
+
+        /* --- TÍTULO: fijarlo en su sitio, que NO se mueva --- */
+        #titulo-donut {
+            position: relative !important;
+            z-index: 10 !important;
+            margin-top: 0px !important;
+            margin-bottom: 10px !important;
+            text-align: center;
+        }
+
+        /* --- SUBIR EL DONUT ENTERO (contenedor real) --- */
+        div[data-testid="stImageContainer"] {
+            margin-top: -20px !important;   /* Ajusta aquí: -10, -20, -40... */
+            text-align: center !important;
+        }
+
+        /* --- SUBIR SOLO EL GRÁFICO (la imagen) --- */
+        div[data-testid="stImageContainer"] img {
+            transform: translateY(-30px) !important;  /* Ajusta aquí para subir más */
+            transition: transform 0.2s ease-out;
+        }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+
+
+# ============================================================================
+#           RESUMEN 
+# ============================================================================
+elif menu == "Resumen":
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Resumen de Bienestar")
+        st.markdown("Consulta tus métricas recientes y estado de ánimo diario.")
+
+    if user_id is None:
+        st.error("Usuario no identificado. Vuelve a iniciar sesión.")
+        st.stop()
+
+    rows = database.load_biometrics(user_id)
+    df = biometrics_rows_to_df(rows)
+
 
     if df.empty:
         st.warning("No hay datos registrados todavía.")
     else:
         latest = df.tail(1).iloc[0]
 
-        # TARJETA PASOS
         st.markdown("---")
         col1, col2 = st.columns([4,1])
         with col1:
-            st.markdown("## Pasos")
+            st.subheader("Pasos")
             st.markdown(f"<h2>{int(latest.steps)}</h2>", unsafe_allow_html=True)
         with col2:
-            st.image("assets/icon_pasos.png", width=100)
+            icon_pasos = os.path.join(ASSETS_DIR, "icon_pasos.png")
+            if os.path.exists(icon_pasos):
+                st.image(icon_pasos, width=100)
 
-
-        # TARJETA SUEÑO
         st.markdown("---")
         col1, col2 = st.columns([4,1])
         with col1:
-            st.markdown("## Sueño")
+            st.subheader("Sueño")
             st.markdown(f"<h2>{latest.sleep_hours} hs</h2>", unsafe_allow_html=True)
         with col2:
-            st.image("assets/icon_sueno.png", width=100)
+            icon_sueno = os.path.join(ASSETS_DIR, "icon_sueno.png")
+            if os.path.exists(icon_sueno):
+                st.image(icon_sueno, width=100)
 
-
-        # ESTADO DE ÁNIMO
         st.markdown("---")
-        st.markdown("## Estado de Ánimo")
+        st.subheader("Estado de Ánimo")
 
+        # ----- MOOD PICKER -----
         if "mood" not in st.session_state:
             st.session_state.mood = None
 
@@ -573,107 +835,198 @@ elif menu == "Resumen":
 
         for i, (file, label, value) in enumerate(mood_files):
             with cols[i]:
-                icon_path = os.path.join(ASSETS_DIR, file)
-                st.image(icon_path, width=70)
 
-                # el botón cambia cuando está seleccionado
-                selected = (st.session_state.mood == value)
-                btn_label = f"✔ {label}" if selected else label
+                icon_path = os.path.join(ASSETS_DIR, file)
+
+                # Imagen centrada con animación y estilo
+                if os.path.exists(icon_path):
+                    encoded_img = base64.b64encode(open(icon_path, 'rb').read()).decode()
+                    st.markdown(
+                        f"""
+                        <div class='mood-wrapper'>
+                            <img src='data:image/png;base64,{encoded_img}' 
+                                width='75' 
+                                class='mood-face {"selected" if st.session_state.mood == value else ""}'>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f"""
+                        <div class="mood-wrapper" 
+                                style="width:75px;height:75px;background:#eee;border-radius:16px;display:flex;align-items:center;justify-content:center;">
+                            {label[0]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+
+                # BOTÓN centrado debajo — añadir pequeño espaciador para separarlo de la imagen
+                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+                btn_label = "Seleccionar" if st.session_state.mood != value else "✓ Seleccionado"
 
                 if st.button(btn_label, key=f"mood_btn_{value}"):
                     st.session_state.mood = value
 
+                    # GUARDADO EN BD
+                    try:
+                        database.save_mood_log(user_id, f"Estado: {label}", label, value)
+                    except:
+                        pass
+
+                    # POPUP agradable
+                    st.success(f"Estado registrado: {label}")
+
+                    # OPCIONAL: sonido TTS del click
+                    if current_user.get("tts_enabled", True):
+                        try:
+                            tts_say("Estado actualizado", tempfile.NamedTemporaryFile(delete=False).name)
+                        except:
+                            pass
+
+                    st.rerun()
 
 
 
-        # RECOMENDACIÓN
-        st.markdown("<div class='recommend-box'>Tu recomendación de hoy es</div>", unsafe_allow_html=True)
 
-        # BOTÓN CHAT
-        st.markdown("<div class='big-btn'>Chatea con Aura</div>", unsafe_allow_html=True)
-
-
-
-# -----------------------------
-# REGISTRO DEL ESTADO
-# -----------------------------
+# ============================================================================
+#            REGISTRO DE ESTADO 
+# ============================================================================
 elif menu == "Registro de Estado":
-    st.title("Registro de estado")
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Registro de estado")
+        st.markdown("Comparte cómo te sientes hoy para recibir recomendaciones personalizadas.")
+    st.markdown("---")
+
+    if user_id is None:
+        st.error("Usuario no identificado. Vuelve a iniciar sesión.")
+        st.stop()
+
+    # -----------------------------
+    #   MODO DE ENTRADA
+    # -----------------------------
     mode = st.radio("Modo de entrada", ("Texto", "Subir audio"), key="reg_mode")
     user_text = ""
+
+    # -----------------------------
+    #   TEXTO
+    # -----------------------------
     if mode == "Texto":
         user_text = st.text_area("¿Cómo te sientes hoy?", key="reg_text")
+
+    # -----------------------------
+    #   AUDIO (WHISPER)
+    # -----------------------------
     else:
-        audio_file = st.file_uploader("Sube audio", type=["wav","mp3","m4a"])
+        audio_file = st.file_uploader("Sube un archivo de audio", type=["wav","mp3","m4a"])
         if audio_file:
             st.audio(audio_file)
-            st.info("Transcribiendo audio...")
-            try:
-                import speech_recognition as sr
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
-                    tf.write(audio_file.read())
-                r = sr.Recognizer()
-                with sr.AudioFile(tf.name) as src:
-                    audio = r.record(src)
-                user_text = r.recognize_google(audio, language="es-ES")
-                st.success("Transcripción: " + user_text)
-            except Exception as e:
-                st.warning(f"No se pudo transcribir: {e}")
+            with st.spinner("Transcribiendo audio…"):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
+                        tf.write(audio_file.read())
+                        temp_audio_path = tf.name
+
+                    user_text = transcribe_audio(temp_audio_path)
+
+                    st.success("Transcripción detectada:")
+                    st.write(user_text)
+                except Exception as e:
+                    st.warning(f"No se pudo transcribir el audio: {e}")
+                    user_text = ""
+
+    # -----------------------------
+    #   PROCESAR
+    # -----------------------------
     if st.button("Analizar y guardar"):
         if not user_text.strip():
-            st.error("Escribe algo primero.")
-        else:
-            sent, score = analyze_text_sentiment(user_text)
-            database.save_mood_log(user_id, user_text, sent, score)
-            rows = database.load_biometrics(user_id)
-            df = biometrics_rows_to_df(rows)
-            if df.empty:
-                sim = simulate_biometrics()
-                database.save_biometrics(user_id, sim)
-                latest = sim
-            else:
-                latest = df.tail(1).iloc[0].to_dict()
-            reco = generate_recommendation(user_text, latest, current_user.get("target_steps",8000))
-            st.session_state.last_recommendation = reco
-            st.info(reco)
-            if current_user.get("tts_enabled", True):
-                try:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
-                    tmp.close()
-                    ap = tts_say(reco, tmp.name)
-                    if ap:
-                        st.audio(ap)
-                except:
-                    pass
-    st.markdown("</div>", unsafe_allow_html=True)
+            st.error("Escribe algo o sube audio válido.")
+            st.stop()
 
-# -----------------------------
-# CHAT CON AURA
-# -----------------------------
+        # 1. Analizar sentimiento
+        emotion, score = analyze_text_sentiment(user_text)
+
+        # 2. Guardar en BD
+        database.save_mood_log(user_id, user_text, emotion, score)
+
+        # 3. Cargar biometrías
+        rows = database.load_biometrics(user_id)
+        df = biometrics_rows_to_df(rows)
+
+        if df.empty:
+            latest_bio = simulate_biometrics()
+            database.save_biometrics(user_id, latest_bio)
+        else:
+            latest_bio = df.tail(1).iloc[0].to_dict()
+
+        # 4. Generar recomendación (ahora SOLO user_text)
+        reco = generate_recommendation(user_text)
+
+        st.session_state.last_recommendation = reco
+        st.info(reco)
+
+        # 5. TTS
+        if current_user and current_user.get("tts_enabled", True):
+            try:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
+                tmp.close()
+                ap = tts_say(reco, tmp.name)
+                if ap:
+                    st.audio(ap)
+            except:
+                pass
+
+
+
+# ============================================================================ 
+#            CHAT CON AURA 
+# ============================================================================
 elif menu == "Chat con Aura":
-    st.image("assets/logo.png", width=65)
-    st.markdown("## Chatea con Aura")
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Chatea con Aura")
+        st.markdown("Habla con Aura, tu asistente virtual de bienestar. Pregúntale sobre salud, ejercicio, nutrición y más.")
+    st.markdown("---")
+    if user_id is None:
+        st.error("Usuario no identificado. Vuelve a iniciar sesión.")
+        st.stop()
+
+
     for role, text in st.session_state.chat_history:
         if role == "user":
             st.markdown(f"<div class='msg-user'>{text}</div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='msg-aura'>{text}</div>", unsafe_allow_html=True)
+
     col1, col2 = st.columns([4,1])
     with col1:
         user_msg = st.text_input(" ", placeholder="Escribe aquí…", key="chat_input_box", label_visibility="collapsed")
     with col2:
         st.markdown("<div style='font-size:24px;text-align:center;'>🎤</div>", unsafe_allow_html=True)
+
     if st.button("Enviar"):
         if user_msg.strip():
             st.session_state.chat_history.append(("user", user_msg))
             rows = database.load_biometrics(user_id)
             df = biometrics_rows_to_df(rows)
             latest = df.tail(1).iloc[0].to_dict() if not df.empty else simulate_biometrics()
-            reply = generate_recommendation(user_msg, latest, current_user.get("target_steps",8000))
+            reply = generate_recommendation(user_msg, latest, current_user.get("target_steps",8000) if current_user else 8000)
+            
             st.session_state.chat_history.append(("aura", reply))
             sent, score = analyze_text_sentiment(user_msg)
             database.save_mood_log(user_id, user_msg, sent, score)
-            if current_user.get("tts_enabled", True):
+            if current_user and current_user.get("tts_enabled", True):
                 try:
                     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
                     tmp.close()
@@ -683,120 +1036,119 @@ elif menu == "Chat con Aura":
                 except:
                     pass
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# -----------------------------
-# RUTINAS
-# -----------------------------
+
+
+# ============================================================================
+#            RUTINAS 
+# ============================================================================
 elif menu == "Rutinas":
-    st.title("Rutinas personalizadas")
-    # Rutina 1
-    col1, col2 = st.columns([1,3])
+    header_col1, header_col2 = st.columns([1,7])
+    with header_col1:
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
+    with header_col2:
+        st.title("Rutinas personalizadas")
+        st.markdown("Selecciona una rutina para mejorar tu bienestar físico y mental.")
+    st.markdown("---")
+
+    # ---- RUTINA 1: RESPIRACIÓN ----
+    col1, col2 = st.columns([1,5])
     with col1:
-        if os.path.exists("assets/rutina_respiracion.png"):
-            st.image("assets/rutina_respiracion.png", width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🧘</div>", unsafe_allow_html=True)
+        img = os.path.join(ASSETS_DIR, "rutina_respiracion.png")
+        if os.path.exists(img):
+            st.image(img, width=84)
     with col2:
         st.subheader("Respiración guiada")
         st.write("5 min — Nivel bajo")
         if st.button("Iniciar respiración"):
             st.success("Comenzando respiración guiada…")
+            st.video("https://www.youtube.com/watch?v=YFSc7Ck0Ao0")  # vídeo respiración
     st.markdown("---")
 
-    # Rutina 2
-    col1, col2 = st.columns([1,3])
+    # ---- RUTINA 2: ESTIRAMIENTOS ----
+    col1, col2 = st.columns([1,5])
     with col1:
-        if os.path.exists("assets/rutina_estiramientos.png"):
-            st.image("assets/rutina_estiramientos.png", width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🤸</div>", unsafe_allow_html=True)
+        img2 = os.path.join(ASSETS_DIR, "rutina_estiramientos.png")
+        if os.path.exists(img2):
+            st.image(img2, width=84)
     with col2:
         st.subheader("Estiramientos básicos")
-        st.write("10 min — Nivel medio")
+        st.write("5 min — Nivel medio")
         if st.button("Iniciar estiramientos"):
             st.success("Iniciando estiramientos…")
+            st.video("https://www.youtube.com/watch?v=2L2lnxIcNmo")  # vídeo de estiramientos
     st.markdown("---")
 
-    # Rutina 3
-    col1, col2 = st.columns([1,3])
+    # ---- RUTINA 3: YOGA ----
+    col1, col2 = st.columns([1,5])
     with col1:
-        if os.path.exists("assets/rutina_yoga.png"):
-            st.image("assets/rutina_yoga.png", width=84)
-        else:
-            st.markdown("<div class='rutina-img'>🧘‍♀️</div>", unsafe_allow_html=True)
+        img3 = os.path.join(ASSETS_DIR, "rutina_yoga.png")
+        if os.path.exists(img3):
+            st.image(img3, width=84)
     with col2:
         st.subheader("Yoga suave")
-        st.write("15 min — Nivel bajo")
+        st.write("25 min — Nivel bajo")
         if st.button("Iniciar yoga"):
-            st.success("Iniciando yoga suave")
+            st.success("Iniciando yoga suave…")
+            st.video("https://www.youtube.com/watch?v=Eml2xnoLpYE")  # vídeo yoga suave
     st.markdown("---")
 
-# -----------------------------
-# PERFIL
-# -----------------------------
+
+
+# ============================================================================
+#            PERFIL 
+# ============================================================================
 elif menu == "Perfil":
-
-    # ---- HEADER ------------------------------------------------------------------
-    header_col1, header_col2 = st.columns([1,4])
+    header_col1, header_col2 = st.columns([1,7])
     with header_col1:
-        if os.path.exists("assets/logo.png"):
-            st.image("assets/logo.png", width=60)
-        else:
-            st.markdown("<div style='width:60px;height:60px;border-radius:50%;background:#eaf6ec;display:flex;align-items:center;justify-content:center;font-size:30px;'>🧘‍♀️</div>", unsafe_allow_html=True)
-
+        logo_p = os.path.join(ASSETS_DIR, "logo.png")
+        if os.path.exists(logo_p):
+            st.image(logo_p, width=90)
     with header_col2:
-        st.markdown("<h2 style='margin-top:8px;'>Perfil</h2>", unsafe_allow_html=True)
-
+        st.title("Perfil y Configuración")
+        st.markdown("Gestiona tu información personal, preferencias y ajustes de la aplicación.")
     st.markdown("---")
 
-    # ============================================================================
-    # METAS
-    # ============================================================================
     st.markdown("### <b>Metas</b>", unsafe_allow_html=True)
-
     dormir_mejor = st.slider("Dormir mejor", 0, 10, 8)
     reducir_estres = st.slider("Reducir estrés", 0, 10, 3)
-    moverme = st.slider("Moverme más (pasos)", 2000, 20000, current_user.get("target_steps", 8000), step=500)
-
+    moverme = st.slider("Moverme más (pasos)", 2000, 20000, (current_user.get("target_steps", 8000) if current_user else 8000), step=500)
     st.markdown("---")
 
-    # ============================================================================
-    # ACCESIBILIDAD
-    # ============================================================================
     st.markdown("### <b>Ajustes de Accesibilidad</b>", unsafe_allow_html=True)
-
-    # Tamaño de letra
     colA, colB = st.columns([1,1])
     with colA:
         st.write("Tamaño de letra")
     with colB:
-        font_size = st.radio(
-            "tamaño_letra_radio",
-            ["Pequeño", "Normal", "Grande"],
-            horizontal=True,
-            label_visibility="collapsed"
-        )
+        options = ["Pequeño", "Normal", "Grande"]
+        current_font = st.session_state.accesibilidad.get("font_size", "Normal")
+        try:
+            idx = options.index(current_font)
+        except ValueError:
+            idx = 1
+        font_size = st.radio("tamaño_letra_radio", options, index=idx, horizontal=True, label_visibility="collapsed")
 
-    modo_oscuro = st.checkbox("Modo oscuro")
-    lectura_voz = st.checkbox("Lectura de voz", value=current_user.get("tts_enabled", True))
-    contraste_alto = st.checkbox("Contraste alto")
+    modo_oscuro = st.checkbox("Modo oscuro", value=st.session_state.accesibilidad.get("dark_mode", False))
+    lectura_voz = st.checkbox("Lectura de voz", value=st.session_state.accesibilidad.get("tts_enabled", True))
+    contraste_alto = st.checkbox("Contraste alto", value=st.session_state.accesibilidad.get("high_contrast", False))
+
+    # Guardar en session_state para que se aplique al recargar la página
+    st.session_state.accesibilidad.update({
+        "font_size": font_size,
+        "dark_mode": modo_oscuro,
+        "tts_enabled": lectura_voz,
+        "high_contrast": contraste_alto
+    })
 
     st.markdown("---")
-
-    # ============================================================================
-    # INTEGRACIONES
-    # ============================================================================
     st.markdown("### <b>Integraciones</b>", unsafe_allow_html=True)
-
-    # ---- Apple Health ----
     col1, col2 = st.columns([1,1])
     with col1:
         st.markdown("Apple Health")
     with col2:
         st.markdown("<div style='text-align:right;color:green;font-weight:600;'>Conectado</div>", unsafe_allow_html=True)
-
-    # ---- Wearables ----
     col1, col2 = st.columns([1,1])
     with col1:
         st.markdown("Wearables")
@@ -809,18 +1161,31 @@ elif menu == "Perfil":
 
     st.markdown("---")
 
-    # ============================================================================
-    # GUARDAR
-    # ============================================================================
     if st.button("Guardar cambios", use_container_width=True):
-        database.update_user(
-            user_id,
-            name=current_user["name"],
-            target_steps=moverme,
-            tts_enabled=lectura_voz
-        )
-        st.session_state.user["target_steps"] = moverme
-        st.session_state.user["tts_enabled"] = lectura_voz
-        st.success("Cambios guardados correctamente.")
+        if current_user:
+            # Guardar en DB (si tu función soporta estos campos)
+            try:
+                database.update_user(
+                    current_user["user_id"],
+                    name=current_user["name"],
+                    target_steps=moverme,
+                    tts_enabled=lectura_voz,
+                    font_size=st.session_state.accesibilidad["font_size"],
+                    dark_mode=st.session_state.accesibilidad["dark_mode"],
+                    high_contrast=st.session_state.accesibilidad["high_contrast"]
+                )
+            except Exception:
+                pass
 
-    st.markdown("</div>", unsafe_allow_html=True)
+            # Refrescar session_state.user
+            st.session_state.user.update({
+                "target_steps": moverme,
+                "tts_enabled": lectura_voz,
+                "font_size": st.session_state.accesibilidad["font_size"],
+                "dark_mode": st.session_state.accesibilidad["dark_mode"],
+                "high_contrast": st.session_state.accesibilidad["high_contrast"]
+            })
+            st.success("Cambios guardados correctamente.")
+        else:
+            st.error("No hay usuario activo.")
+
