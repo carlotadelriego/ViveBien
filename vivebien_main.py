@@ -21,7 +21,6 @@ import hashlib
 from data_simulation import generate_history, simulate_biometrics
 from feedback_engine import analyze_text_sentiment, generate_recommendation
 from aura_ai import chat_with_aura, tts_edge, stt_groq, check_configuration
->>>>>>> feature/chathugo
 import database
 from modelos_locales import (
     analyze_text_sentiment,
