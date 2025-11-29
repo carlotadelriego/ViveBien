@@ -11,6 +11,17 @@ import base64
 import datetime
 import math
 from data_simulation import generate_history, simulate_biometrics
+
+ASSETS_DIR = os.path.join(os.getcwd(), "assets")
+from audio_recorder_streamlit import audio_recorder
+import hashlib
+
+
+# módulos del proyecto
+from data_simulation import generate_history, simulate_biometrics
+from feedback_engine import analyze_text_sentiment, generate_recommendation
+from aura_ai import chat_with_aura, tts_edge, stt_groq, check_configuration
+>>>>>>> feature/chathugo
 import database
 from modelos_locales import (
     analyze_text_sentiment,
@@ -159,6 +170,33 @@ def biometrics_rows_to_df(rows):
     df['date'] = pd.to_datetime(df['date'])
     df.set_index('date', inplace=True)
     return df
+
+
+# -----------------------------
+# session state inicial
+# -----------------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "last_recommendation" not in st.session_state:
+    st.session_state.last_recommendation = ""
+if "menu" not in st.session_state:
+    st.session_state.menu = "Inicio"
+if "show_register" not in st.session_state:
+    st.session_state.show_register = False
+if "chat_initialized" not in st.session_state:
+    st.session_state.chat_initialized = False
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
+if "input_key" not in st.session_state:
+    st.session_state.input_key = 0
+if "pending_audio" not in st.session_state:
+    st.session_state.pending_audio = None
+if "auto_tts" not in st.session_state:
+    st.session_state.auto_tts = False
 
 
 # -----------------------------
@@ -989,59 +1027,156 @@ elif menu == "Registro de Estado":
 #            CHAT CON AURA 
 # ============================================================================
 elif menu == "Chat con Aura":
-    header_col1, header_col2 = st.columns([1,7])
-    with header_col1:
-        logo_p = os.path.join(ASSETS_DIR, "logo.png")
-        if os.path.exists(logo_p):
-            st.image(logo_p, width=90)
-    with header_col2:
-        st.title("Chatea con Aura")
-        st.markdown("Habla con Aura, tu asistente virtual de bienestar. Pregúntale sobre salud, ejercicio, nutrición y más.")
-    st.markdown("---")
-    if user_id is None:
-        st.error("Usuario no identificado. Vuelve a iniciar sesión.")
+    
+    # ---- HEADER ----
+    col_logo, col_title = st.columns([1, 5])
+    with col_logo:
+        if os.path.exists("assets/logo.png"):
+            st.image("assets/logo.png", width=65)
+    with col_title:
+        st.markdown("## Chatea con Aura")
+    
+    # ---- VERIFICAR CONFIGURACIÓN ----
+    ai_status = check_configuration()
+    if not ai_status["groq"]:
+        st.error("⚠️ Configura GROQ_API_KEY en tu archivo .env")
+        st.info("Obtén tu key gratis en: https://console.groq.com/keys")
         st.stop()
-
-
-    for role, text in st.session_state.chat_history:
+    
+    # ---- MENSAJE DE BIENVENIDA ----
+    if not st.session_state.chat_initialized:
+        welcome = "¡Hola! 🌿 Soy Aura, tu asistente de bienestar. Estoy aquí para acompañarte y ayudarte a sentirte mejor. ¿Cómo te encuentras hoy?"
+        st.session_state.chat_history.append(("aura", welcome))
+        st.session_state.chat_initialized = True
+    
+    # ---- TOGGLE LECTURA AUTOMÁTICA ----
+    col_toggle, col_spacer = st.columns([1, 3])
+    with col_toggle:
+        st.session_state.auto_tts = st.toggle("🔊 Lectura automática", value=st.session_state.auto_tts)
+    
+    # ---- REPRODUCIR AUDIO PENDIENTE (de botón 🔊) ----
+    if st.session_state.pending_audio:
+        st.audio(st.session_state.pending_audio, format="audio/mp3", autoplay=True)
+        st.session_state.pending_audio = None
+    
+    # ---- MOSTRAR MENSAJES ----
+    for i, (role, text) in enumerate(st.session_state.chat_history):
         if role == "user":
             st.markdown(f"<div class='msg-user'>{text}</div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<div class='msg-aura'>{text}</div>", unsafe_allow_html=True)
-
-    col1, col2 = st.columns([4,1])
-    with col1:
-        user_msg = st.text_input(" ", placeholder="Escribe aquí…", key="chat_input_box", label_visibility="collapsed")
-    with col2:
-        st.markdown("<div style='font-size:24px;text-align:center;'>🎤</div>", unsafe_allow_html=True)
-
-    if st.button("Enviar"):
-        if user_msg.strip():
-            st.session_state.chat_history.append(("user", user_msg))
-            rows = database.load_biometrics(user_id)
-            df = biometrics_rows_to_df(rows)
-            latest = df.tail(1).iloc[0].to_dict() if not df.empty else simulate_biometrics()
-            reply = generate_recommendation(user_msg, latest, current_user.get("target_steps",8000) if current_user else 8000)
+            col_msg, col_audio = st.columns([10, 1])
+            with col_msg:
+                st.markdown(f"<div class='msg-aura'>{text}</div>", unsafe_allow_html=True)
+            with col_audio:
+                if st.button("🔊", key=f"listen_{i}", help="Escuchar este mensaje"):
+                    audio_file = tts_edge(text)
+                    if audio_file:
+                        st.session_state.pending_audio = audio_file
+                        st.rerun()
+    
+    st.markdown("---")
+    
+    # ---- BARRA DE INPUT ----
+    col_text, col_mic, col_send = st.columns([6, 1, 1])
+    
+    with col_text:
+        user_msg = st.text_input(
+            "msg",
+            placeholder="Escribe tu mensaje...",
+            key=f"chat_input_{st.session_state.input_key}",
+            label_visibility="collapsed"
+        )
+    
+    with col_mic:
+        audio_bytes = audio_recorder(
+            text="",
+            recording_color="#e74c3c",
+            neutral_color="#95a5a6",
+            icon_name="microphone",
+            icon_size="2x",
+            pause_threshold=2.0,
+            sample_rate=16000
+        )
+    
+    with col_send:
+        send_btn = st.button("📤", use_container_width=True, help="Enviar")
+    
+    # ---- PROCESAR AUDIO GRABADO (solo si es nuevo) ----
+    audio_processed = False
+    if audio_bytes:
+        audio_hash = hashlib.md5(audio_bytes).hexdigest()
+        
+        if audio_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = audio_hash
             
-            st.session_state.chat_history.append(("aura", reply))
-            sent, score = analyze_text_sentiment(user_msg)
-            database.save_mood_log(user_id, user_msg, sent, score)
-            if current_user and current_user.get("tts_enabled", True):
-                try:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".aiff")
-                    tmp.close()
-                    ap = tts_say(reply, tmp.name)
-                    if ap:
-                        st.audio(ap)
-                except:
-                    pass
+            with st.spinner("🎤 Escuchando..."):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                    tmp.write(audio_bytes)
+                    tmp_path = tmp.name
+                
+                transcribed = stt_groq(tmp_path)
+                os.unlink(tmp_path)
+                
+                if transcribed and not transcribed.startswith("⚠️"):
+                    user_msg = transcribed
+                    audio_processed = True
+                    st.toast(f"🎤 {transcribed}")
+                else:
+                    st.warning("No pude entenderte. ¿Puedes repetirlo?")
+    
+    # ---- ENVIAR MENSAJE ----
+    if (send_btn or audio_processed) and user_msg and user_msg.strip():
+        
+        # Obtener biométricos
+        rows = database.load_biometrics(user_id)
+        df = biometrics_rows_to_df(rows)
+        bio = df.tail(1).iloc[0].to_dict() if not df.empty else simulate_biometrics()
+        
+        # Guardar mensaje usuario
+        st.session_state.chat_history.append(("user", user_msg))
+        
+        # Respuesta de Aura
+        with st.spinner("🌿 Aura está pensando..."):
+            reply = chat_with_aura(
+                user_message=user_msg,
+                biometrics=bio,
+                target_steps=current_user.get("target_steps", 8000),
+                mood=st.session_state.get("mood", "neutral"),
+                chat_history=st.session_state.chat_history[:-1]
+            )
+        
+        st.session_state.chat_history.append(("aura", reply))
+        
+        # Guardar en BD
+        sent, score = analyze_text_sentiment(user_msg)
+        database.save_mood_log(user_id, user_msg, sent, score)
+        
+        # Audio SOLO si lectura automática está activada
+        if st.session_state.auto_tts:
+            audio_file = tts_edge(reply)
+            if audio_file:
+                st.session_state.pending_audio = audio_file
+        
+        # Limpiar input
+        st.session_state.input_key += 1
+        st.rerun()
+    
+    # ---- LIMPIAR CHAT ----
+    st.markdown("<br>", unsafe_allow_html=True)
+    _, col_clear, _ = st.columns([2, 1, 2])
+    with col_clear:
+        if st.button("🗑️ Limpiar", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.chat_initialized = False
+            st.session_state.last_audio_hash = None
+            st.session_state.input_key += 1
+            st.session_state.pending_audio = None
             st.rerun()
-
-
-
-# ============================================================================
-#            RUTINAS 
-# ============================================================================
+            
+# -----------------------------
+# RUTINAS
+# -----------------------------
+>>>>>>> feature/chathugo
 elif menu == "Rutinas":
     header_col1, header_col2 = st.columns([1,7])
     with header_col1:
